@@ -1,0 +1,1340 @@
+---
+title: "exRNAQC011: RNA purification kit performance (small RNA quantification), part of phase 1"
+author: "Annelien Morlion - on behalf of exRNAQC Consortium"
+date: "15/12/2020"
+output:
+  bookdown::html_document2:
+    toc: yes
+    toc_float: true
+    toc_depth: 4
+    fig_caption: yes
+    number_sections: true
+    highlight: kate
+    theme: flatly
+    df_print: paged
+    code_folding: hide
+---
+  
+# Introduction 
+## Experimental setup
+For the evaluation of the different RNA isolation kits in the first phase of exRNAQC, blood was drawn from 1 healthy volunteer. We tested 8 different kits:
+
+- miRNeasy Serum/Plasma Kit (abbreviated to MIR; Qiagen, 217184)
+- miRNeasy Serum/Plasma Advanced Kit (abbreviated to MIRA; Qiagen, 217204)
+- mirVana PARIS Kit (abbreviated to MIRV and MIRVE; Life Technologies, AM1556)
+- NucleoSpin miRNA Plasma Kit (abbreviated to NUC; Macherey-Nagel, 740981.50)
+- QIAamp ccfDNA/RNA Kit (abbreviated to CCF; Qiagen, 55184)
+- Plasma/Serum Circulating and Exosomal RNA Purification Kit/Slurry Format (abbreviated to CIRC; Norgen Biotek Corp., 42800) 
+- Maxwell RSC miRNA Plasma and Exosome Kit (Promega, AX5740) in combination with the Maxwell RSC Instrument (abbreviated to MAX; Promega, AS4500)
+- MagNA Pure 24 Total NA Isolation Kit (Roche, 07 658 036 001) in combination with the MagNA Pure instrument (abbreviated to MAP; Roche, 07 290 519 001)
+
+Most kits allow a range of plasma input volumes. Therefore, we tested both the minimum and maximum input volume recommended by the supplier. The input volume in ml directly follows the abbreviated name in the plots in this report. This yields 17 unique combinations of kit and input volumes, with 3 technical replicates processed for every combination.
+
+## Metric selection
+Seven performance metrics were evaluated. Kits for phase 2 were eventually selected based on transforming metrics for sensitivity and precision to robust z-scores (see [Selection for phase 2]).
+
+- Sensitivity: absolute number of miRNAs detected (after setting a count cutoff that removes 95% of single positive datapoints between technical replicates).
+- Precision: pairwise ALC (area-left-of-curve) calculation between technical replicates.
+
+## RMarkdown set-up
+First, basic parameters are set up in this RMarkdown, such as loading dependencies, setting paths and setting up a uniform plot structure. 
+
+```{r setup, warning=FALSE, message=FALSE, echo=F}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+require(tidyverse)
+require(bookdown)
+require(biomaRt)
+require(reshape2)
+require(broom)
+require(RColorBrewer)
+require(scales)
+require(ggrepel)
+library(gridExtra)
+library(corrplot)
+library(ggpubr)
+source("./HelperFunctions.R")
+
+# plot style
+theme_point<-theme_classic()+theme(strip.background = element_blank())
+theme_bar<-theme_classic()+theme(axis.text.x = element_text(angle=90, hjust=1, vjust=0.5),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.line.x = element_blank())
+theme_boxplot<-theme_classic()+theme(axis.text.x = element_text(angle=90),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank(),axis.line.x = element_blank(),legend.position = "none")
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
+color_panel1 <-  c("#039748","#039748","#ffbf00","#ffbf00","#e35d6a","#e35d6a","#5bb75b","#5bb75b","#428bca","#428bca","#23496b","#23496b","grey","grey","#cc2028","#cc2028","#e87810")
+names(color_panel1) <- c("CCF1","CCF4","CIRC0.25","CIRC5","MAP2","MAP4","MAX0.1","MAX0.5","MIRA0.2","MIRA0.6","MIRV0.1","MIRV0.625","MIRVE0.1","MIRVE0.625","NUC0.3","NUC0.9","MIR0.2")
+
+color_panel2 <-  c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","grey","#ffbf00","#cc2028","#039748")
+names(color_panel2) <- c("MagnaPure","Maxwell","miRNeasySPAkit","miRNeasySPkit","mirVana","mirVanaE","Norgen","NucleoSpin","QIAamp")
+
+
+color_panel_spikes <- c("#e35d6a","gray","#5bb75b","#428bca")
+names(color_panel_spikes) <- c("LP1","MIMAT","RC1","RC2")
+color_panel_spikes2 <- c("#23496b","#ffbf00","gray","#ffbf01","orange","#23496b")
+names(color_panel_spikes2) <- c("LP","RC","MIMAT","RC1","RC2","LP1")
+
+data_path <- here::here("data_raw/")
+basecamp_path <- "/Users/almorlio/Dropbox (Vandesompele lab)/Basecamp/exRNAQC/exRNAQC_011 Select three kits with one input volume (small RNA)/Data analysis/"
+
+full_nr <- format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
+source(here::here("scripts","HelperFunctions.R"))
+```
+
+```{r readdata, warning=FALSE, error=FALSE, echo=F}
+miRNAs <- data.table::fread(paste0(data_path, "allmiRs_subs.txt"), header=T, data.table = F)
+spikes <- data.table::fread(paste0(data_path, "allspikes_subs.txt"), header=T, data.table = F)
+reads <- data.table::fread(paste0(data_path, "allreads_subs.txt"), header=T, data.table = F)
+contam <- data.table::fread(paste0(data_path, "allcontam_subs.txt"), header=T, data.table = F)
+```
+
+# Annotation
+Sample annotation with info about kit, used input volume, eluate volume etc.
+
+```{r, echo=F}
+sample_annotation <- data.table::fread(here::here("docs","Annotation exRNAQC011.csv"), header=T, data.table = F)
+sample_annotation<-sample_annotation %>% mutate(SampleID=paste0(GraphKit,"_",TechnicalReplicate), PlasmaInputVml= PlasmaInputV/1000)
+
+DT::datatable(sample_annotation %>% dplyr::select(c("UniqueID","Biotype","RNAisolation","PlasmaInputV","EluateV","RNAinputV","TechnicalReplicate","Tube","LibraryPrep",Abbrevation="GraphKit")), rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Sample annotation table")
+```
+
+RNA extraction Control (RC) spike-ins are added to plasma prior to RNA isolation, and Library Prep control (LP) spike-in controls to the RNA eluate prior to library prep. All spike-in RNA molecules were ordered at Integrated DNA Technologies as 5’-monophosphate and 3’OH RNA oligonucleotides, and diluted in 500 nM carrier DNA oligo (TCGAAGTATTC).
+
+```{r, echo=F}
+LP <- data.frame(SpikeID=c("LP1-01","LP1-02","LP1-03","LP1-04","LP1-06","LP1-07","LP1-10","LP1-11","LP1-12"),sequence=c("GUCCCACUCCGUAGAUCUGUUC","GAUGUAACGAGUUGGAAUGCAA","UAGCAUAUCGAGCCUGAGAACA","CAUCGGUCGAACUUAUGUGAAA","UCUUAACCCGGACCAGAAACUA","AGGUUCCGGAUAAGUAAGAGCC","UGAUACGGAUGUUAUACGCAGC","CCUGGAACUUAGGACGUGAAUC","UCAUGAGUCCGUACCUUGAUUG"))
+           
+RC <- data.frame(SpikeID=c("RC1-01","RC1-03","RC1-04","RC1-06","RC1-07","RC1-09","RC1-10","RC1-11","RC1-12","RC2-25","RC2-28","RC2-34"), sequence=c("ACUCAUCUACGUACGCAUCUAGUCU","UGCUAUCAUAUCACAGUACGCGAGC","UAGAUGAGAUACUGAUAGCGACGUA","AUCGUCUCGUCAUCUCAUAUCUACA","UAUGCAUAUGAUCACGAGACUCAGU","GCUCUACACUCUACUCGUCAGCUGU","CGAUGCUAUAGACUCUCACGUGAUG","CGCAUCAGUCGUCAUCUAGAUACAG","CUGAUGAUAGAUACGCGCACACAGU","AUGCUGAUGAUAGACGCUACUGACU","CGUAUCGCUGCUCUGAGUCACUAUCUAC","AGAUAGUACUGAUCUGCUGCGACGAGUGACUGUC"))
+
+DT::datatable(RC, caption="Different RNA extraction Control (RC) spike-ins are used. For each RC spike-in, the ID and sequence is shown")
+DT::datatable(LP, caption="Different Library Prep Control (LP) spike-ins are used. For each LP spike in, the ID and sequence is shown")
+```
+
+```{r spike_annotation, echo = FALSE}
+spikeconc<-read_tsv("/Users/almorlio/Dropbox (Vandesompele lab)/Basecamp/exRNAQC/ELN general/Spikes/spike_conc.txt")
+```
+
+# Sequencing and preprocessing
+- Three high-output (HO) runs on NextSeq 500:
+  - 20181005_exRNAQC011_02-101750649  
+  - 20181005_exRNAQC011_04-106020915  
+  - 20181005_exRNAQC011-99504405
+- Original number of single-end reads (min= 2,239,801; median= 6,519,328; max= 10,112,548)
+
+## Filtering
+First, adapters were trimmed with cutadapt v1.18, allowing an error rate of 0.15 in the adapter. After trimming, a minimum length of 15 bases was required. Finally, reads where less than 80% of bases have a quality score of 20 or higher were filtered out.
+
+## Downsampling
+Randomly downsample each library to the lowest number of reads (at FASTQ level) to make sure the comparison of metrics is fair. E.g. if one sample is sequenced deeper it is likely to yield more miRNAs compared to a sample that was sequenced less deep.
+
+As the lowest number of reads after quality filtering is 1,843,262 (in MIRVE0.1 sample), we downsampled all samples to **1.5M reads**.
+
+## Total number of reads
+
+```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="Number of reads at different stages in the data processing workflow. Raw reads: total number of reads in raw FASTQ files at start; adapter trimmed reads: number of reads after adapter trimming and requiring a minimum length of 15; quality filtered reads: number of adapter trimmed reads where at least 80% of bases have a phred score of 20 or higher; reads after downsampling: all samples were downsampled to 1.5M." }
+reads_all <- read.table(paste0(data_path, "all_read_counts.txt"), header=TRUE) %>% mutate("UniqueID"=gsub("-.*$","",sample))
+reads_melt <- reads_all %>% mutate(subs_lines=6000000) %>% melt(value.name = "reads")
+reads_melt <- full_join(reads_melt, sample_annotation, by = c("UniqueID")) %>% #filter(variable != "clump_lines") %>%
+  mutate(reads=reads/4)
+pd <- position_dodge(0.1)
+ggplot(reads_melt,aes(x=reorder(variable, dplyr::desc(reads)),y=reads, group = UniqueID))+
+  geom_line(position = pd, alpha=0.6)+
+  geom_point(position = pd, alpha=0.8, size=1.4) +
+  theme_point + #coord_flip() +
+	#facet_wrap(~RunID, ncol = 3)
+  scale_y_continuous(limits = c(0,NA), breaks=c(seq(0,10000000, 2000000)), labels=full_nr) +
+  geom_hline(yintercept = 1500000, linetype = "dashed", color = "gray")+
+	labs(y="", x = "") +
+	#theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  scale_x_discrete(labels = c("raw reads","adapter\n trimmed\n reads", "quality\n filtered \n reads", "reads after\n downsampling\n"), limits=c("orig_lines", "clipped_lines", "qc_lines", "subs_lines"))+
+	scale_color_manual(values=color_panel2)
+# Reads should be subsampled to: reads_melt %>% filter(variable == "pre") %>% select(reads) %>% min()
+
+ggsave("reads_preprocessing_smallRNA.pdf", plot=ggplot2::last_plot()+labs(title="Number of reads at different stages"), path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+```
+
+## Count conversion
+RNA spike-in reads are first isolated using a custom Python script. Non-spike reads are then mapped with Bowtie (1.2.2) and further annotated based on miRbase v22 (for miRNAs), UCSC hg38 (for tRNA) & Ensembl v91 (for other small RNAs: snoRNA, snRNA, MT_tRNA, MT_rRNA, rRNA en miscRNA). 
+
+```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="Differences in mapping percentages. How many % of the 1.5M reads collectively map to spikes, miRbase v22 (for miRNAs), UCSC hg38 (for tRNA) & Ensembl v91 (for other small RNAs: snoRNA, snRNA, MT_tRNA, MT_rRNA, rRNA en miscelaneous RNA). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAP2: MagNA Pure 24 total NA isolation kit, 2 ml input; MAP4: MagNA Pure 24 total NA isolation kit, 4 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+spikes_sum <- spikes %>% gather(key="UniqueID",value="spikecounts",-"spikeID") %>% 
+  group_by(UniqueID) %>% dplyr::summarise(counts=sum(spikecounts, na.rm=T)) %>%
+  #spread(key=UniqueID,value=spikesum) %>% 
+  mutate(reads="spikes")
+
+# add sum of spikes to the total mapped reads (these were not considered as "mapped" yet)
+reads_complete <- reads %>% gather(key="UniqueID",value="counts",-"reads") %>% 
+  rbind(., spikes_sum) %>%
+  spread(key=reads, value=counts) %>% 
+  mutate(all_mapped = mapped + spikes) %>% 
+  gather(key="reads",value="counts",-"UniqueID") %>% 
+  mutate(percentage=counts/1500000*100) # % mapped (in total 1500000 reads)
+
+# ggplot(reads_complete %>% filter(reads=="all_mapped"),
+#        aes(x=reorder(GraphKit, desc(GraphKit)),y=counts,col=RNAisolation)) +
+#   geom_point() +
+#   theme_point +
+#   coord_flip() +
+#   #theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)) +
+#   scale_y_continuous(limits=c(0,1500000),labels=full_nr) +
+#   scale_color_manual(values=color_panel2) +
+#   labs(x="",y="mapped reads")
+
+ggplot(reads_complete %>% filter(reads=="all_mapped") %>% left_join(sample_annotation, by="UniqueID"),
+       aes(x=reorder(GraphKit, desc(GraphKit)),y=percentage)) +
+  geom_point()+
+  theme_point +
+  coord_flip() +
+  #theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_y_continuous(limits=c(0,100),labels=full_nr) +
+  scale_color_manual(values=color_panel2) +
+  labs(x="",y="")
+
+ggsave("mapping_perc_miRNAs.pdf", plot=ggplot2::last_plot(), path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+```
+
+## RNA biotypes
+- % of mapped reads (spike reads excluded) to different RNA biotypes. 
+- A very large fraction of miscellaneous RNAs (mainly Y-RNAs), a known issue in platelet-poor human plasma.
+- The fraction of reads that map to the human genome but not annotated is much larger for MagnaPure kit samples than for others
+  - Together with the strandedness issue at mRNA level for this kit (potential DNA contamination), we decided to leave this kit out of further analyses.
+- Another observiation is that the RNA2 replicate samples (from the second library size selection) show a consistently different pattern in terms of number of miRNAs than RNA1 and RNA3. There may have been an issue here with size selection. Therefore, for comparison of detected miRNAs, we apply a random downsampling (without replacement) to the minimum at the level of the miRNA counts (see [miRNA counts]).
+
+
+```{r, fig.width=12, fig.height=5, fig.align="center", warning=F, fig.cap= "Fraction of mapped reads for each RNA biotype. Spike-in RNAs are not included. (miRNA: microRNA; misc_RNA: miscellaneous RNA - mainly Y-RNAs; multiple_piRNA_tRNA: multimapping to piRNA and tRNA; multiple_snRNA_misc_RNA: multimapping to small nucle(ol)ar RNA and miscellaneous RNA; not_annotated: mapping to reference genome but not annotated as small RNA; piRNA: piwi-interacting RNA; rRNA: ribosomal RNA; snoRNA: small nucleolar RNA; snRNA: small nuclear RNA; tRNA: transfer RNA)"}
+#miR
+tmp1 <- miRNAs %>% gather(key="UniqueID",value="counts", -"MIMATID") %>%
+  mutate(type="miRNA") %>%
+  dplyr::group_by(UniqueID,type) %>% 
+  dplyr::summarise(sum_counts = sum(counts, na.rm=T)) #calculate sum of MIMAT per sample
+  
+#contaminants
+tmp2 <- gather(contam, key="UniqueID",value="counts",-c("contam","ensembl_id")) %>%
+  dplyr::select(c("UniqueID","type"="contam","counts")) %>%
+  mutate(type = gsub("multiple_misc_RNA_snRNA","multiple_snRNA_misc_RNA",type)) %>%
+  mutate(type = gsub("multiple_tRNA_piRNA","multiple_piRNA_tRNA",type)) %>%
+  dplyr::group_by(UniqueID, type) %>%
+  dplyr::summarise(sum_counts=sum(counts,na.rm=T))
+
+#join them together and calculate %
+tmp <- rbind(tmp1,tmp2) 
+
+#notann
+tmp3 <- tmp %>% ungroup() %>% dplyr::group_by(UniqueID) %>% 
+  dplyr::summarise(sum_all = sum(sum_counts, na.rm=T)) %>% 
+  full_join(gather(reads %>% filter(reads=="mapped"), key="UniqueID", value="mapped", -"reads") %>% dplyr::select(-reads), by="UniqueID") %>% 
+  mutate(type="not_annotated",not_ann = mapped-sum_all) %>%
+  dplyr::select(c("UniqueID","type","sum_counts"="not_ann")) %>% group_by(UniqueID)
+
+perc_all <- rbind(tmp,tmp3) %>%
+  full_join(reads_complete %>% filter(reads=="mapped") %>% 
+              dplyr::select(-reads), by="UniqueID") %>% 
+  ungroup() %>% dplyr::group_by(UniqueID,type) %>%
+  mutate(perc=sum_counts/counts*100) %>%
+  left_join(sample_annotation, by="UniqueID")
+
+
+ggplot(perc_all, aes(x=TechnicalReplicate, y=perc,fill=type)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~GraphKit, nrow=1) +
+  theme_bar +
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values=c("black",color_panel[-3])) +
+  labs(y="%",x="")
+
+rm(tmp1,tmp2,tmp3,tmp)
+```
+
+
+```{r remove_MAP, echo=F}
+#filter out MAP kits (sample_annotation table does not contain these samples anymore)
+sample_annotation_all <-sample_annotation 
+sample_annotation <- sample_annotation_all %>% filter(RNAisolation!="MagnaPure")
+reads <- reads %>% dplyr::select(c("reads",pull(sample_annotation,UniqueID))) 
+contam <- contam %>% dplyr::select(c("contam","ensembl_id",pull(sample_annotation,UniqueID))) 
+spikes <- spikes %>% dplyr::select(c("spikeID",pull(sample_annotation,UniqueID))) 
+
+miRNAs <- data.table::fread("/Users/almorlio/Dropbox (Vandesompele lab)/Personal/Projects/exRNAQC011_smallRNA/data_raw/miRNAs_extrasubs.txt", header = T, data.table=F) #use the subsampled counts (resulting from subs_miRs.py script - reservoir sampling cf Knuth, 1981)
+miRNAs <- miRNAs %>% dplyr::select(c("MIMATID",pull(sample_annotation,UniqueID))) 
+```
+
+
+## Spikes{.tabset}
+RC (RNA extraction Control) spikes were added before RNA purification (volume adapted according to plasma input volume: (1 microL RC/ 100 microL plasma)). If there are more RC spikes detected, there is less endogenous RNA in plasma (of note, we used a large plasma pool from only one donor)
+
+LP (Library Preparation) spikes were added to the RNA eluate after RNA purification (2 microL LP/ 12 microL eluate), prior to library preparation. The more LP spikes detected, the less endogenous RNA present in the eluate. Given that we always used the same eluate volume for library prep, more LP spikes indicate a lower endogenous RNA concentration in the eluate.
+
+### Spike percentage in mapped reads
+Note that MIRVE0.1 has a large fraction of LP spikes, pointing to a low RNA concentration in eluate, see [miRNA concentration].
+
+```{r spike_perc, fig.align="center", fig.width=12, fig.height=5, fig.cap="Percentage of mapped reads that goes to spike-in RNAs. LP (Library Preparation) spikes were added prior to library preparation, after RNA purification (blue). RC (RNA extraction Control) spikes were added prior to RNA purification (yellow). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+spikesum<-gather(spikes, key="UniqueID",value="counts",-"spikeID") %>% 
+  mutate(spiketype=sub(".-.*","",spikeID)) %>% group_by(UniqueID,spiketype) %>%
+  dplyr::summarise(spikesum=sum(counts,na.rm = TRUE))
+
+perc_spikes<-full_join(reads_complete %>% filter(reads=="all_mapped"), spikesum,by="UniqueID") %>% 
+  dplyr::select(-reads) %>% drop_na()
+
+perc_spikes<-perc_spikes %>% dplyr::mutate(perc=spikesum/counts*100)
+#write_tsv(perc_spikes,"percentage_spikes.txt")
+perc_spikes<-left_join(perc_spikes,sample_annotation, by="UniqueID") 
+ggplot(perc_spikes,aes(x=TechnicalReplicate,y=perc,fill=spiketype))+
+  geom_col()+
+  #labs(title="% spikes of all mapped reads")+
+  facet_wrap(~GraphKit, nrow=1) +
+  theme_bar+
+  theme(legend.position = "bottom") +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x="",y="%")+
+  scale_fill_manual(values=color_panel_spikes2)
+
+```
+
+
+### Spike-count linearity
+Spike counts are proportional to their relative concentration in the mix
+
+```{r spikelinearity, fig.height=10, fig.width=8, fig.cap="Spike counts are proportional to their relative concentration in the mix. LP (Library Preparation) spikes were added prior to library preparation, after RNA purification (blue). RC (RNA extraction control) spikes were added prior to RNA purification (blue). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+ggplot(left_join(gather(spikes, key="UniqueID",value="counts",-"spikeID"),spikeconc) %>% left_join(sample_annotation, by="UniqueID"),aes(x=log(relconc,10),y=log(counts,10),color=sub(".-.*","",spikeID)))+
+  geom_point(size=0.8, alpha=0.5)+
+  facet_wrap(~GraphKit)+
+  #theme_point +
+  theme_classic() +
+  theme(legend.position = "top", legend.title = element_blank()) + 
+  scale_color_manual(values=color_panel_spikes2) +
+  guides(color = guide_legend(override.aes = list(alpha = 1, size=1))) +
+  labs(x="log10(relative spike conc)",y="log10(spike counts)")
+```
+
+# Performance metrics
+Seven performance metrics are calculated.
+
+In order to compare different kits in a uniform way across the different performance metrics, we transformed these into **z-scores**. We made sure that a **higher value always corresponds to better performance**. To account for the small sample size, we calculated **robust z-scores**.
+
+```{r}
+#normal z-score calculation with: scale(data$measurevar, center=T, scale=T)
+#function to calculate robust z-scores:
+robzscore <- function(data, measurevar){
+  require(dplyr)
+  median_data <- median(pull(data,paste(measurevar))) #median
+  #MAD <- median(abs((pull(data, paste(measurevar))) - median_data)) #mean absolute deviation
+  s <- stats::mad(pull(data, paste(measurevar))) #scaling factor; mad = formula to calculate median absolute deviation which contains scaling factor of 1.4826!
+  if (s == 0) { #if MAD = 0, scaling factor = 0 so we get a denominator of 0 -> alternative scaling factor needed
+     mean_data <- mean(pull(data, paste(measurevar))) #mean
+     meanAD <- mean(abs((pull(data, paste(measurevar))) - mean_data))
+     s <- 1.253314*meanAD #alternative scaling factor, approximately equals the standard deviation
+  }
+  
+  robz <- (pull(data, paste(measurevar)) - median_data) / (s) #calculate absolute difference between every value and median, and divide by scaling factor
+}
+
+#initiate z-score tables (z-score for each individual data point, later, we will use the median/mean per GraphKit)
+z_indiv <- dplyr::select(sample_annotation, c("GraphKit", "SampleID"))
+z_indiv_robust <- dplyr::select(sample_annotation, c("GraphKit", "SampleID"))
+```
+
+## miRNA concentration
+The ratio of endogenous miRNA to LP count fractions reflects the relative concentration of endogenous miRNA in the eluate: if there is more endogenous miRNA in the input for the library prep, there will be less LPs and therefore the ratio endogenous miRNA/LP is higher. Remember that some kits have a much larger eluate volume after RNA isolation. A larger total eluate volume results in more diluted endogenous RNA (lower concentration) and therefore less endogenous RNA in library prep (given constant input volume for all library preparations).
+
+**Scoring measure: the higher the concentration, the better**
+  
+```{r CONCENTRATION}
+#kallisto_genes <- kallisto %>% filter(!str_detect(ensembl_transcript_id,"LP|R1|R2")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE) 
+gene_level_ratios <- rbind(reads %>% filter(reads=="mapped_miR") %>% 
+                             mutate(type="endogenous") %>% group_by(type) %>%
+                             dplyr::summarise_if(is.numeric, sum, na.rm=TRUE),
+                           spikes %>% mutate(type=gsub(".-..$","",spikeID)) %>%
+                             group_by(type) %>% 
+                             dplyr::summarise_if(is.numeric, sum, na.rm=TRUE)) %>%
+  gather(., key="UniqueID",value="counts",-type) %>%  #long format
+  spread(., key = "type", value="counts") %>%
+  mutate("LPvsEndo"=LP/endogenous, 
+         "RCvsEndo"=RC/endogenous,
+         "EndovsLP"= endogenous/LP) %>%
+  left_join(., sample_annotation %>% dplyr::select(c("UniqueID","RNAisolation","SampleID","GraphKit","EluateV","PlasmaInputV")), by="UniqueID")  #add annotation
+
+# spikes1 <- ggplot(gene_level_ratios, aes(x=GraphKit, y=EndovsLP, fill=RNAisolation, colour=RNAisolation)) +
+#   #geom_bar(stat="identity") +
+#   geom_point(size=1.2) +
+#   scale_fill_manual(values=color_panel) +
+#   scale_colour_manual(values=color_panel) +
+#   theme_bar +
+#   labs(x="", y="endogenous/LP", title="RNA concentration", subtitle="Endogenous RNA vs LP")
+
+```
+
+```{r CONCENTRATIONpart2, fig.height=4, fig.width=6, fig.keep="last", fig.cap="Relative miRNA concentration in eluate after RNA purification. Concentration: ratio of endogenous miRNA to LP spikes. Values were first log transformed and rescaled to the average of MIRVE0.1, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown (grey lines). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+#calculate statistics for endogenous/LP (sd, sem, 95% ci)
+conc <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsLP", groupvar=c("GraphKit")) %>%
+  mutate(measurevar_resc_oriscale = 10^measurevar_log_resc)
+
+# Plot LP/endo in log10 scale
+spikes_conc <- ggplot(conc, aes(x=reorder(GraphKit, desc(GraphKit)), y=measurevar_resc_oriscale)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=RNAisolation), size=1.2) +
+  geom_point(data=conc, aes(x=GraphKit, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="relative miRNA concentration") +
+  scale_colour_manual(values=color_panel2) +
+  scale_y_log10() +
+  theme_point +
+  coord_flip()
+
+spikes_conc + theme(legend.position="none")
+ggsave("concentration_smallRNA.pdf", plot=spikes_conc, path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+```
+
+```{r z_score_conc}
+# normal z-score calculation 
+## calculate individual z-score for all data points
+tmp <- cbind("SampleID"=paste(conc$SampleID),
+             "GraphKit"=paste(conc$GraphKit),
+             "concentration"=paste(scale(conc$measurevar_resc_oriscale, center=T, scale=T))) %>% as.tibble(.) %>% 
+  type_convert(.) #convert columns with all numbers to type "dbl"
+## add these to the z-score df
+z_indiv <- left_join(z_indiv, tmp, by=c("SampleID","GraphKit"))
+rm(tmp)
+
+# robust z-score calculation
+## Calculate robust z scores to account for small sample sizes
+robust_z <- robzscore(conc, "measurevar_resc_oriscale")
+tmp <- cbind(GraphKit = paste(conc$GraphKit), SampleID=paste(conc$SampleID), concentration=robust_z) %>% as.tibble(.) %>% type_convert(.)
+## add these to robust z-score df
+z_indiv_robust <- left_join(z_indiv_robust, tmp, by=c("SampleID","GraphKit"))
+rm(tmp)
+
+## variable correlation
+#cor_z_scores <- cor(z_indiv$concentration, z_indiv_robust$concentration, method = "spearman")
+rm(conc)
+```
+
+## miRNA yield 
+For small RNA sequencing purposes, we are most interested in the concentration of the eluate as we can only use a limited volume for library prep. However, by multiplying the relative miRNA concentrations above with the total eluate volume, we obtain the relative miRNA yield in the eluate after RNA isolation. In case the total eluate volume is larger, the RNA will be more diluted (this is for example the case for MIRV: 100 microL eluate compared to only 12 microL for CCF). 
+
+**If the miRNA yield is high, but the eluate volume is large, further concentrating the total eluate before library prep may give better results .** Of note, we did not evaluate this in our study.
+**Scoring: the higher the yield, the better**
+
+```{r YIELD, fig.height=4, fig.width=6, fig.show="last", fig.cap="Relative miRNA yield of kits. Yield: eluate volume corrected miRNA concentration. Values were first log transformed and rescaled to the average of MIRVE0.1, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown (grey lines). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+# Correct LP/endogenous ratio for eluate V
+gene_level_ratios <- gene_level_ratios %>%
+  mutate("EndovsLP_EluateCorr"= (endogenous/LP)*EluateV, 
+         "EndovsLP_Input_EluateCorr"= (endogenous/LP)*EluateV/PlasmaInputV,
+         "RCvsLP_Input_EluateCorr" = (RC/LP)*EluateV/PlasmaInputV)
+
+#calculate statistics for LP/endogenous (sd, sem, 95% ci)
+yield <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsLP_EluateCorr", groupvar=c("GraphKit")) %>%
+  mutate(measurevar_resc_oriscale = 10^measurevar_log_resc)
+
+# Plot LP/endo in log10 scale
+spikes_yield <- ggplot(yield, aes(x=reorder(GraphKit,desc(GraphKit)), y=measurevar_resc_oriscale)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=RNAisolation), size=1.2) +
+  geom_point(data=yield, aes(x=GraphKit, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="relative miRNA yield in total eluate") +
+  scale_colour_manual(values=color_panel2) +
+  scale_y_log10() +
+  theme_point +
+  coord_flip()
+
+spikes_yield + theme(legend.position="none")
+#grid_arrange_shared_legend(spikes_conc,spikes_yield)
+
+ggsave("yield_smallRNA.pdf", plot=spikes_yield, path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+
+rm(spikes_conc, spikes_yield)
+```
+
+
+```{r z_score_yield}
+# normal z-score calculation 
+## calculate individual z-score for all data points
+tmp <- cbind("SampleID"=paste(yield$SampleID),
+             "GraphKit"=paste(yield$GraphKit),
+             "yield"=paste(scale(yield$measurevar_resc_oriscale, center=T, scale=T))) %>% as.tibble(.) %>% 
+  type_convert(.) #convert columns with all numbers to type "dbl"
+## add these to the z-score df
+z_indiv <- left_join(z_indiv, tmp, by=c("SampleID","GraphKit"))
+rm(tmp)
+
+# robust z-score calculation
+## Calculate robust z scores to account for small sample sizes
+robust_z <- robzscore(yield,"measurevar_resc_oriscale")
+tmp <- cbind(GraphKit = paste(yield$GraphKit), SampleID=paste(yield$SampleID), yield=robust_z) %>% as.tibble(.) %>% type_convert(.)
+## add these to robust z-score df
+z_indiv_robust <- left_join(z_indiv_robust, tmp, by=c("SampleID","GraphKit"))
+rm(tmp, robust_z)
+
+## variable correlation
+#cor_z_scores <- cor(z_indiv$concentration, z_indiv_robust$concentration, method = "spearman")
+rm(yield)
+```
+
+## Efficiency of kits
+Based on the previous plot with miRNA yield, we observe differences in RNA isolation efficiencies among kits. By **correcting the yield for the plasma input volume**, we obtain a better picture:
+
+- **with more input, you expect to have more yield in eluate. To correct for this: divide yield by input volume**
+- (endogenous/LP)*EluateV / PlasmaInputV
+- compare CCF4 to MAX0.5: CCF4 has 8x more plasma (and therefore also more RNA) in input than MAX0.5, but this does not translate in 8x more yield in the eluate -> MAX0.5 seems to extract the lower volume more efficiently than CCF4
+- Although the yield is higher within a given kit when using the maximum input volume, this sometimes seems to be associated with a lower efficiency than the minimal input volume
+
+Remark: while we could also look at RC/LP ratio corrected for input and eluate volume (should give similar results), we decided to look at endogenous RNA as a more representative metric as this is the biomaterial of interest.
+
+**There is a clear difference in kit efficiency**, with a difference of factor 10 or more.
+
+**If some adjustments would be made to kits with low input volume, but high efficiency** (i.e. increase allowed plasma input V and keep eluate V as small as possible), **the overall performance may further improve**. Of note, we did not evaluate this in our study.
+
+**Scoring: the higher the efficiency, the better**
+
+```{r EFFICIENCY, fig.height=4, fig.width=6, fig.align="center", fig.cap="Relative efficiency of kits. Efficiency: plasma input volume corrected miRNA yield. Values were first log transformed and rescaled to the average of MIRVE0.625, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+#calculate statistics for LP/endogenous (sd, sem, 95% ci)
+p1 <- ggplot(gene_level_ratios, aes(x=GraphKit, y=EndovsLP_Input_EluateCorr, fill=RNAisolation, colour=RNAisolation)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  scale_fill_manual(values=color_panel2) +
+  scale_colour_manual(values=color_panel2) +
+  theme_bar +
+  labs(x="", y="Relative efficiency", title="Efficiency of kits")
+
+eff <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsLP_Input_EluateCorr", groupvar=c("GraphKit")) %>% 
+    mutate(measurevar_resc_oriscale = 10^measurevar_log_resc)
+
+p1 <- ggplot(eff, aes(x=reorder(GraphKit, dplyr::desc(GraphKit)), y=measurevar_resc_oriscale)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=RNAisolation), size=1.2) +
+  geom_point(data=eff, aes(x=GraphKit, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="relative RNA isolation efficiency") +
+  scale_colour_manual(values=color_panel2) +
+  scale_y_log10() +
+  coord_flip() +
+  theme_point
+
+p1 + theme(legend.position="none")
+ggsave("efficiency_endo_smallRNA.pdf", plot=p1, path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+
+rm(p1)
+```
+
+```{r z_score_eff}
+# normal z-score calculation 
+## calculate individual z-score for all data points
+tmp <- cbind("SampleID"=paste(eff$SampleID),
+             "GraphKit"=paste(eff$GraphKit),
+             "efficiency"=paste(scale(eff$measurevar_resc_oriscale, center=T, scale=T))) %>% as.tibble(.) %>% 
+  type_convert(.) #convert columns with all numbers to type "dbl"
+## add these to the z-score df
+z_indiv <- left_join(z_indiv, tmp, by=c("SampleID","GraphKit"))
+rm(tmp)
+
+
+# robust z-score calculation
+## Calculate robust z scores to account for small sample sizes
+## First for endogenous efficiency
+robust_z <- robzscore(eff,"measurevar_resc_oriscale")
+tmp <- cbind(GraphKit = paste(eff$GraphKit), SampleID=paste(eff$SampleID), efficiency=robust_z) %>% as.tibble(.) %>% type_convert(.)
+## add these to robust z-score df
+z_indiv_robust <- left_join(z_indiv_robust, tmp, by=c("SampleID","GraphKit"))
+rm(tmp, robust_z)
+
+## variable correlation
+#cor_z_scores <- cor(z_indiv$concentration, z_indiv_robust$concentration, method = "spearman")
+rm(eff)
+```
+
+
+## Filter threshold {.tabset}
+- We want to have a filter threshold that eliminates 95% of single positive genes (SP) between technical replicates, i.e. genes detected in only one technical replicate (cf. miRQC study of Mestdagh et al., 2014, Nature Methods): 
+  - **Only miRNA counts are considered here**
+  - All pseudocounts < 1 are first rounded down to 0
+  - Pairwise comparison of technical replicates (3 pairs per kit-volume combination)
+  - Determine threshold at which at least 95% of the single positives are removed
+  - Take median cutoff per combination of kit and volume
+- **95% SP elimination cutoff (which is specific for each kit-volume combination) will be used for filtering throughout ALL analyses**
+  - This is our proposed strategy to make data comparable, we do not claim that this is the only way to do this
+  
+### cutoff examples
+Two examples of pairwise kit-volume comparisons together with their cutoff and r-squared value (based on linear model (y=x) of log counts). Histograms show the relative number of RNAs with counts in that bin. For an overview of the cutoffs for each kit-volume combination, see next tab [95% SP elimination cutoffs].
+
+```{r cutoff_determination, warning=FALSE, message=FALSE, fig.height=3.5, fig.width=3, fig.show="hold"} 
+
+miRNAs[is.na(miRNAs)] <- 0
+double_positives<-miRNAs %>%
+  mutate_if(is.numeric, funs(replace(., .< 1, 0))) #remove pseudocounts
+
+#make table for the 15 GraphKits (kit+volume) containing the pairwise combinations of replicates + amount of SP/DP/DN (before and after filtering)
+single_pos <- data.frame(GraphKit = rep(unique(sample_annotation$GraphKit),3) %>% sort(), 
+                          Replicates = rep(c("RNA1-RNA2", "RNA1-RNA3","RNA2-RNA3"), length(unique(sample_annotation$GraphKit))), 
+                          SP_no_filter = NA, DP_no_filter = NA, DN_no_filter = NA,   
+                          SP_after_filter = NA, DP_after_filter = NA, DN_after_filter = NA,
+                          filter_threshold = NA) 
+single_pos$full_name <- paste(single_pos$GraphKit, single_pos$Replicates, sep="_")
+
+#for every kit+volume combination: determine the pairwise cutoffs
+for (UniqueKit in unique(sample_annotation$GraphKit)){
+  sample_duplicates<-sample_annotation %>% filter(GraphKit==UniqueKit) %>%
+    dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
+  
+  if(nrow(sample_duplicates)>1){
+    #print(UniqueKit)
+    double_pos_sample<-double_positives %>%
+        dplyr::select(MIMATID,sample_duplicates$UniqueID)
+    
+    samples_comb <- combn(sample_duplicates$UniqueID,2) #compare 2 of the 3 samples at a time
+    for (n_col in 1:ncol(samples_comb)){
+      #print(samples_comb[,n_col])
+      samplename1 <- samples_comb[,n_col][1]
+      sample1 <- sample_annotation[sample_annotation$UniqueID==samplename1,]$TechnicalReplicate
+      samplename2 <- samples_comb[,n_col][2]
+      sample2 <- sample_annotation[sample_annotation$UniqueID==samplename2,]$TechnicalReplicate
+      varname <- paste0(UniqueKit,"_",sample1,"-",sample2)
+      #print(varname)
+      
+      double_pos_subset <- double_pos_sample %>% dplyr::select(MIMATID, paste(samplename1), paste(samplename2))
+      
+      double_pos_subset$pos_type <- as.factor(
+        ifelse(double_pos_subset[,paste(samplename1)] > 0 & 
+                 double_pos_subset[,paste(samplename2)] > 0, "DP", #double positive
+               ifelse(double_pos_subset[,paste(samplename1)] == 0 &
+                        double_pos_subset[,paste(samplename2)] ==0 , "DN", #double negative
+                      "SP"))) # else: single positive
+      single_p <- double_pos_subset %>% 
+        filter(pos_type=="SP") %>% 
+        mutate(., max=pmax(get(samplename1), get(samplename2)))
+      
+      #Threshold that removes 95% of the single positives
+      threshold <- round(as.numeric(paste(quantile(single_p$max,probs = 0.95, na.rm=TRUE)))+0.005, 2) #get the 95% quantile number, round UP to two decimal numbers
+      
+      double_pos_subset$colouring <- as.factor(ifelse(double_pos_subset[,paste(samplename1)] > threshold, "> cutoff", 
+                                                      ifelse(double_pos_subset[,paste(samplename2)] > threshold, "> cutoff", "<= cutoff")))
+     
+      single_pos[single_pos$full_name==paste(varname),]$filter_threshold <- threshold
+      
+      #Single Positives
+      single_pos[single_pos$full_name==paste(varname),]$SP_no_filter <- sum( 
+        ((double_pos_subset[,paste(samplename1)] > 0) & (double_pos_subset[,paste(samplename2)] == 0)) | 
+          ((double_pos_subset[,paste(samplename1)] == 0) & (double_pos_subset[,paste(samplename2)] > 0))
+        )
+      single_pos[single_pos$full_name==paste(varname),]$SP_after_filter <-  sum( 
+        ((double_pos_subset[,paste(samplename1)] > threshold) & (double_pos_subset[,paste(samplename2)] == 0)) | 
+          ((double_pos_subset[,paste(samplename1)] == 0) & (double_pos_subset[,paste(samplename2)] > threshold))
+        )
+      
+      #Double Positives
+      single_pos[single_pos$full_name==paste(varname),]$DP_no_filter <- sum((double_pos_subset[,paste(samplename1)] > 0) & 
+                                                                              (double_pos_subset[,paste(samplename2)] > 0))
+      single_pos[single_pos$full_name==paste(varname),]$DP_after_filter <- sum((double_pos_subset[,paste(samplename1)] > threshold) & 
+                                                                                 (double_pos_subset[,paste(samplename2)] > threshold))
+      
+      #Double Negatives
+      single_pos[single_pos$full_name==paste(varname),]$DN_no_filter <- sum((double_pos_subset[,paste(samplename1)] == 0) & 
+                                                                              (double_pos_subset[,paste(samplename2)] == 0))
+      single_pos[single_pos$full_name==paste(varname),]$DN_after_filter <- sum((double_pos_subset[,paste(samplename1)] <= threshold) & 
+                                                                              (double_pos_subset[,paste(samplename2)] <= threshold))
+      
+      #Calculate percentages of SP and DP remaining after filtering
+      single_pos$remainingSP <- single_pos$SP_after_filter/single_pos$SP_no_filter
+      single_pos$remainingDP <- single_pos$DP_after_filter/single_pos$DP_no_filter
+      
+      #correlation_data <- double_pos_subset %>% dplyr::select(c(paste(samplename1),paste(samplename2))) %>% dplyr::filter_if(is.numeric,all_vars(.>0)) #take out genes that are not >0 in both samples
+    
+      lm_tmp <- lm(log(pull(double_pos_sample,samplename1)+1,10) ~ -1 + log(pull(double_pos_sample, samplename2)+1,10)) # fit linear model of log values technical replicates (no intercept)
+      lm_rsquared <- summary(lm_tmp)$r.squared #take r-squared of lm 
+
+      p <- ggplot(double_pos_subset, aes(x=log(get(samplename1)+1,10), y=log(get(samplename2)+1,10), col=colouring)) +
+        geom_point(alpha=0.3,size=0.4) +
+        #geom_hline(yintercept = log(quantile(single_pos$max,probs = 0.95, na.rm=TRUE)+1,10)) +
+        #geom_vline(xintercept = log(quantile(single_pos$max,probs = 0.95, na.rm=TRUE)+1,10)) +
+        theme_classic() +
+        scale_x_continuous(limits=c(0,5)) +
+        scale_y_continuous(limits=c(0,5)) +
+        theme(plot.title=element_text(size=9), plot.subtitle=element_text(size=7),
+              legend.title=element_blank(), legend.text=element_text(size=8), legend.position="top",
+              axis.title=element_text(size=8)) +
+        scale_color_manual(values=color_panel[2:6]) +
+        guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
+        labs(title=paste(varname, ": cutoff of", threshold),
+             subtitle=paste0("% remaining after filtering: ",
+                             round(single_pos[single_pos$full_name==paste(varname),]$remainingSP*100,2),"% of SP (R2 = ",
+                             round(lm_rsquared,3), ")"), #R squared of linear model fitting log values of 2 technical replicates
+             x=paste0("log10(",sample1,"+1)"), y=paste0("log10(",sample2,"+1)"))
+      #print(p)
+      rm(lm_tmp,lm_rsquared)
+    }
+  }
+}
+    
+
+```
+
+```{r cutoffexample1, fig.width=4, fig.height=4.5, fig.align="center", fig.keep="last", fig.cap="Pairwise miRNA count comparison of first and third replicate of the CIRC5 kit. The coefficient of determination is 0.941 (linear model that fits log10 values). Single positives are 0 in one replicate and > 0 in other. The cutoff of 3 removes 97.87% of single positives. Green dots show data points that are filtered out with this cutoff. (CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input)"}
+sample_duplicates<-sample_annotation_all %>% filter(GraphKit=="CIRC5") %>%
+    dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
+
+sample1 <- sample_duplicates$UniqueID[1]
+sample2 <- sample_duplicates$UniqueID[3]
+
+double_pos_sample<-double_positives %>%
+        dplyr::select(MIMATID,sample1, sample2)
+
+varname = "CIRC5_RNA1-RNA3"
+threshold <- as.numeric(paste(single_pos %>% filter(GraphKit=="CIRC5" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
+
+double_pos_sample$colouring <- as.factor(ifelse(double_pos_sample[,paste(sample1)] > threshold, "> cutoff", 
+                                                      ifelse(double_pos_sample[,paste(sample2)] > threshold, "> cutoff", "<= cutoff")))
+
+lm_tmp <- lm(log(pull(double_pos_sample,sample1)+1,10) ~ -1 + log(pull(double_pos_sample, sample2)+1,10)) # fit linear model of log values technical replicates (no intercept)
+lm_rsquared <- summary(lm_tmp)$r.squared #take r-squared of lm 
+
+p <- ggplot(double_pos_sample, aes(x=log(get(sample1)+1,10), y=log(get(sample2)+1,10), col=colouring)) +
+  geom_point(size=0.5, alpha=0.4) +
+  theme_classic() +
+  theme(plot.title=element_text(size=9, margin=margin(1,0,0,0)), plot.subtitle=element_text(size=7),
+        legend.title=element_blank(), legend.text=element_text(size=8), legend.position="bottom",
+        axis.title=element_text(size=8)) +
+  scale_color_manual(values=color_panel[2:6]) +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
+  scale_x_continuous(limits=c(0,5)) +
+  scale_y_continuous(limits=c(0,5)) +
+  labs(title=paste(varname, "with cutoff of", threshold),
+       subtitle=paste0("% remaining after filtering: ",
+                       round(single_pos[single_pos$full_name=="CIRC5_RNA1-RNA3",]$remainingSP*100,2),"% of SP (R2 = ",
+                       round(lm_rsquared,3), ")"), #R squared of linear model fitting log values of 2 technical replicates
+                       x=paste0("log10(replicate1 + 1)"), y=paste0("log10(replicate3 + 1)"))
+
+rm(lm_rsquared, lm_tmp)
+
+ggExtra::ggMarginal(p, type = "histogram", size=7)
+
+ggsave("CIRC5_afterdedup.pdf",ggExtra::ggMarginal(p, type = "histogram", size=7), path= here::here("data_output","plots"), height=4.2, width=3.8, dpi = 300, useDingbats=F)
+#write.table(x = dplyr::select(double_pos_sample, c("ensembl_gene_id", paste(sample1), paste(sample2))), file = "test_CIRC5_RNA1_3.txt",sep="\t",quote = F, na = "",row.names=F)
+
+```
+
+```{r cutoffexample2, fig.width=4, fig.height=4.5, fig.align="center", fig.keep="last", fig.cap="Pairwise miRNA count comparison of first and third replicate with MIRV0.1 kit. Coefficient of determination is 0.917 (based on linear model that fits log10 values). Single positives are 0 in one replicate and > 0 in other. The cutoff of 6 removes 95.61% of single positives. Green dots show data points that are filtered out with this cutoff. (MIRV0.1: mirVana PARIS kit, 0.1 ml input)"}
+
+sample_duplicates<-sample_annotation_all %>% filter(GraphKit=="MIRV0.1") %>%
+    dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
+
+sample1 <- sample_duplicates$UniqueID[1]
+sample2 <- sample_duplicates$UniqueID[3]
+
+double_pos_sample<-double_positives %>%
+        dplyr::select(MIMATID,sample1, sample2)
+
+varname = "MIRV0.1_RNA1-RNA3"
+threshold <- as.numeric(paste(single_pos %>% filter(GraphKit=="MIRV0.1" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
+
+double_pos_sample$colouring <- as.factor(ifelse(double_pos_sample[,paste(sample1)] > threshold, "> cutoff", 
+                                                      ifelse(double_pos_sample[,paste(sample2)] > threshold, "> cutoff", "<= cutoff")))
+
+lm_tmp <- lm(log(pull(double_pos_sample,sample1)+1,10) ~ -1 + log(pull(double_pos_sample, sample2)+1,10)) # fit linear model of log values technical replicates (no intercept)
+lm_rsquared <- summary(lm_tmp)$r.squared #take r-squared of lm 
+p <- ggplot(double_pos_sample, aes(x=log(get(sample1)+1,10), y=log(get(sample2)+1,10), col=colouring)) +
+  geom_point(size=0.5, alpha=0.4) +
+  theme_classic() +
+  theme(plot.title=element_text(size=9, margin=margin(1,0,0,0)), plot.subtitle=element_text(size=7),
+        legend.title=element_blank(), legend.text=element_text(size=8), legend.position="top",
+        axis.title=element_text(size=8)) +
+  scale_color_manual(values=color_panel[2:6]) +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
+  scale_x_continuous(limits=c(0,5)) +
+  scale_y_continuous(limits=c(0,5)) +
+  labs(title=paste(varname, "with cutoff of", threshold),
+       subtitle=paste0("% remaining after filtering: ",
+                       round(single_pos[single_pos$full_name=="MIRV0.1_RNA1-RNA3",]$remainingSP*100,2),"% of SP (R2 = ",
+                       round(lm_rsquared,3), ")"), #R squared of linear model fitting log values of 2 technical replicates
+                       x=paste0("log10(replicate1 + 1)"), y=paste0("log10(replicate3 + 1)"))
+
+print(ggExtra::ggMarginal(p, type = "histogram", size=7))
+
+ggsave("MIRV0.1_afterdedup.pdf",ggExtra::ggMarginal(p, type = "histogram", size=7), path= here::here("data_output","plots"), height=4.2, width=3.8, dpi = 300, useDingbats=F)
+
+#write.table(x = dplyr::select(double_pos_sample, c("ensembl_gene_id", paste(sample1), paste(sample2))), file = "test_MIRV0.1_RNA1_3.txt",sep="\t",quote = F, na = "",row.names = F)
+```
+
+### 95% SP elimination cutoffs
+- If all counts smaller than or equal to cutoff are eliminated, at least 95% of single positives are removed, resulting in data that is highly reproducible
+- **Cutoff is always higher for lower input volume within same kit** (with lower input volume, there is more variation in which genes are detected in each replicate)
+- **Cutoffs are close to each other** except in the mirVana kits (MIRV & especially MIRVE). Note that 1 count difference can already have a major impact on the number of miRNAs filtered out
+- We use the median cutoff per kit-volume combination for filtering in further analyses (see table below)
+ 
+- **Scoring: take the negative of the cutoff values (so that higher = better precision)**
+
+```{r cutoffoverview, fig.height=4, fig.width=6, fig.align="center", fig.cap="Count threshold that removes 95% of single positives for each pairwise comparison of replicates. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+cutoff_kit <- single_pos %>% group_by(GraphKit) %>%
+  dplyr::summarise(median_th = median(filter_threshold))
+
+p <- ggplot(single_pos, aes(x=GraphKit, y=filter_threshold, color=Replicates)) +
+  geom_point() +
+  theme_point +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+
+  scale_color_manual(values=color_panel[3:5]) + 
+  scale_y_continuous(limits = c(0,NA)) +
+  labs(y="95% SP cutoff (counts)", x="", color="replicate pairs")
+print(p)
+```
+
+```{r, echo=F}
+DT::datatable(spread(cutoff_kit, key = GraphKit, value=median_th) %>% gather(key="Kit",value="cutoff"), rownames = F, options = list(pageLength = 10, scrollX=T), caption = "Median cutoff per kit")
+```
+
+```{r z_score_SPcutoff}
+# normal z-score calculation 
+## calculate individual z-score for all data points
+# first change the sign of CV to make sure higher = better
+tmp_summary <- single_pos %>% group_by(GraphKit) %>% dplyr::summarize(threshold=median(filter_threshold)) %>%
+  mutate_if(is.numeric, funs(. * -1)) #make counts negative so that a higher metric value corresponds to a better performance
+tmp <- cbind("GraphKit"=paste(tmp_summary$GraphKit), 
+             "precision_threshold"=paste(scale(tmp_summary$threshold, center=T, scale=T))) %>% 
+  as.tibble(.) %>% 
+  type_convert(.) #convert columns with all numbers to type "dbl"
+## add these to the z-score df
+z_indiv <- left_join(z_indiv, tmp, by=c("GraphKit"))
+rm(tmp)
+
+# robust z-score calculation
+## Calculate robust z scores to account for small sample sizes
+robust_z <- robzscore(tmp_summary, "threshold")
+tmp <- cbind(GraphKit = paste(tmp_summary$GraphKit), precision_threshold=robust_z) %>% as.tibble(.) %>% type_convert(.)
+## add these to robust z-score df
+z_indiv_robust <- left_join(z_indiv_robust, tmp, by=c("GraphKit"))
+rm(tmp, robust_z)
+
+
+rm(list=grep("pos|tmp|duplicates|test|single|nique|replicate|name",ls(),value=T))
+
+```
+
+
+### Impact of filtering
+- After applying the repeatability cutoff, remaining miRNA counts per sample: min=27,962; mean=112,015; max=293,373
+- **Scoring: data retention: more % of counts remaining = better precision**
+  - Another scoring measure could be: the higher the number of total reads remaining, the better
+  - Is related to the cutoff & initial number of reads
+- As the cutoffs are close together, the % filtered out is similar among kits (except for MIRVE0.1)
+
+```{r filterimpact, message=FALSE,warning=FALSE,echo=FALSE, fig.width=8, fig.height=4.5, fig.align="center", fig.keep="last", fig.cap="Impact of filtering (filter removes 95% of single positives). Left: % of total counts that are kept after applying filter; right: sum of counts that are not filtered out. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+
+filter_df <- left_join(cutoff_kit, sample_annotation %>% dplyr::select(GraphKit,UniqueID,TechnicalReplicate, RNAisolation), by="GraphKit")
+filter_df$totalcounts <- 0
+filter_df$filteredcounts <- 0
+filter_df$keptcounts <- 0
+
+for (uniqueKit in unique(sample_annotation_all$GraphKit)){
+  samples <- sample_annotation[sample_annotation$GraphKit==uniqueKit,]$UniqueID
+  for (sample in samples) {
+    replicate <- sample_annotation[sample_annotation$UniqueID==sample,]$TechnicalReplicate
+    #print(paste(uniqueKit, sample, replicate))
+    #print(percentage_countslost)
+    filter_df[filter_df$UniqueID==sample,]$totalcounts <- miRNAs %>% dplyr::select(sample) %>% sum()
+    filter_df[filter_df$UniqueID==sample,]$filteredcounts <- miRNAs %>% dplyr::select(sample) %>% filter(get(sample)<=cutoff_kit[cutoff_kit$GraphKit==uniqueKit,]$median_th) %>% sum()
+    filter_df[filter_df$UniqueID==sample,]$keptcounts <- miRNAs %>% dplyr::select(sample) %>% filter(get(sample)>cutoff_kit[cutoff_kit$GraphKit==uniqueKit,]$median_th) %>% sum()
+  }
+}
+
+filter_df$percentage_countslost <- filter_df$filteredcounts/filter_df$totalcounts *100
+filter_df$percentage_countskept <- filter_df$keptcounts/filter_df$totalcounts *100
+p1 <- ggplot(filter_df, aes(x=reorder(GraphKit,desc(GraphKit)),y=percentage_countskept, col=RNAisolation))+
+  geom_jitter()+
+  theme_point +
+  scale_y_continuous(limits=c(90,100)) +
+  #theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+
+  theme(panel.grid.major.y=element_line(linetype = "dashed",color="gray88"))+
+  scale_colour_manual(values=color_panel2) +
+  labs(y="% of total counts remaining after filtering", x="") +
+  coord_flip()
+
+filter_df_long <- gather(filter_df, key="counts",value="value", -c("GraphKit","UniqueID", "TechnicalReplicate", "median_th","percentage_countslost","percentage_countskept","keptcounts","RNAisolation"))
+p2<- ggplot(unique(filter_df_long), aes(x=reorder(GraphKit,desc(GraphKit)),y=value, col=TechnicalReplicate,shape=counts))+
+  geom_point()+
+  theme_point +
+  #theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+
+  theme(panel.grid.major.y=element_line(linetype = "dashed",color="gray88"))+
+  scale_y_log10(labels = comma) +
+  scale_colour_manual(values=color_panel[5:8]) +
+  #ggrepel::geom_text_repel(aes(label=reads)) +
+  labs(y="sum of counts filtered out vs total counts", x="")+
+  coord_flip()
+
+#grid_arrange_shared_legend(p2, p1)
+
+p3 <- ggplot(filter_df, aes(x=reorder(GraphKit,desc(GraphKit)),y=keptcounts, col=RNAisolation))+
+  geom_jitter()+
+  theme_point +
+  #theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+
+  theme(panel.grid.major.y=element_line(linetype = "dashed",color="gray88"))+
+  scale_y_continuous(limits=c(0,NA), labels=full_nr) +
+  #scale_y_log10(limits=c(100000,NA),labels = comma) +
+  scale_colour_manual(values=color_panel2) +
+  #ggrepel::geom_text_repel(aes(label=reads)) +
+  labs(y="sum of remaining counts after filtering", x="")+
+  coord_flip()
+
+
+ggsave("data_retention_smallRNA.pdf", plot=p1, path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+#grid_arrange_shared_legend(p1,p3,nrow=1)
+grid.arrange(p1 + theme(legend.position="none"),
+             p3 + theme(legend.position="none"),nrow=1)
+```
+
+```{r z_score_retention}
+# normal z-score calculation 
+## calculate individual z-score for all data points
+tmp <- cbind("SampleID"=paste0(filter_df$GraphKit,"_",filter_df$TechnicalReplicate),
+             "GraphKit"=paste(filter_df$GraphKit),
+             "data_retention"=paste(scale(filter_df$percentage_countskept, center=T, scale=T))) %>% as.tibble(.) %>% 
+  type_convert(.) #convert columns with all numbers to type "dbl"
+## add these to the z-score df
+z_indiv <- left_join(z_indiv, tmp, by=c("SampleID","GraphKit"))
+rm(tmp)
+
+
+# robust z-score calculation
+## Calculate robust z scores to account for small sample sizes
+## First for endogenous efficiency
+robust_z <- robzscore(filter_df,"percentage_countskept")
+tmp <- cbind(GraphKit = paste(filter_df$GraphKit), SampleID=paste0(filter_df$GraphKit,"_",filter_df$TechnicalReplicate), data_retention=robust_z) %>%
+  as.tibble(.) %>% type_convert(.)
+## add these to robust z-score df
+z_indiv_robust <- left_join(z_indiv_robust, tmp, by=c("SampleID","GraphKit"))
+rm(tmp, robust_z)
+
+## variable correlation
+#cor_z_scores <- cor(z_indiv$concentration, z_indiv_robust$concentration, method = "spearman")
+rm(list=grep("tmp|test|filter",ls(),value=T))
+rm(p1,p2,p3)
+
+```
+
+## Number of miRNAs {.tabset}
+- Filter: only keep **miRNAs** that reach the median 95% SP cutoff per kit in terms of counts
+- Observations before and after filtering:
+  - Less variabilility among kits than at mRNA level (see exRNAQC004)
+  - A higher input volume does not necessarily result in a higher number of detected genes
+- **Scoring: more miRNAs that reach precision threshold = better detection sensitivity**
+
+```{r miRNA_cutoff}
+miRNAs_long <- miRNAs %>% gather(., key="UniqueID", value="counts", -"MIMATID") %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,GraphKit,SampleID)), by="UniqueID") #add kit column
+
+#keep only protein coding miR with more than 0 counts
+miRNAs_long <- miRNAs_long %>% filter(counts > 0)
+
+
+number_miR_detected <- miRNAs_long %>% group_by(SampleID) %>% dplyr::summarize(miR_above0=n()) 
+number_miR_detected <- full_join(number_miR_detected, 
+                                   miRNAs_long %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_above0=sum(counts)), 
+                                   by="SampleID")
+
+
+#cutoff_kit <- single_pos %>% group_by(GraphKit) %>% dplyr::summarise(median_th = median(filter_threshold))
+
+miRNAs_cutoff <- miRNAs %>% gather(., key="UniqueID", value="counts", -"MIMATID") %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,GraphKit,SampleID)), by="UniqueID") %>% #add kit column
+  left_join(., cutoff_kit, by="GraphKit") #add the median cutoff for each kit
+
+miRNAs_cutoff <- miRNAs_cutoff %>% 
+  filter(counts > median_th) 
+
+number_miR_detected <- full_join(number_miR_detected, 
+                                   miRNAs_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(miR_aboveTh=n()),
+                                   by="SampleID")
+number_miR_detected <- full_join(number_miR_detected, 
+                                   miRNAs_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_aboveTh=sum(counts)), 
+                                   by="SampleID")
+
+number_miR_detected <- left_join(number_miR_detected, 
+                                   dplyr::select(sample_annotation, c(GraphKit, RNAisolation, EluateV,SampleID, TechnicalReplicate)),
+                                   by="SampleID")
+#convert to the original format
+miRNAs_cutoff <- dplyr::select(miRNAs_cutoff, MIMATID, UniqueID, counts) %>% 
+  spread(., key=UniqueID, value=counts)
+
+#write.csv(miRNAs_cutoff, file="../../../exRNAQC/miRNAs_cutoff.csv",row.names=FALSE, na="")
+```
+
+```{r nr_miRNA_plots}
+
+# Absolute nr of miR (no filter)
+p1 <- ggplot(number_miR_detected,aes(x=reorder(GraphKit, desc(GraphKit)),y=miR_above0, col=RNAisolation))+
+  geom_point() +
+  theme_point+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  labs(x="", y="# miRNAs (all)") +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel2) +
+  coord_flip() 
+  #theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+  #facet_wrap(~GraphKit, nrow = 1)
+
+# Relative nr of miR (no filter)
+test <- log_rescaling_CI(number_miR_detected, measurevar="miR_above0", groupvar="GraphKit",conf=0.95, log_base=10)
+
+p2 <- ggplot(test, aes(x=GraphKit, y=mean_oriscale, colour=RNAisolation)) + 
+  geom_point() +  
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), width=.1) +
+  geom_line() +
+  labs(x="", y="relative # miRNAs",title="Relative number of miRNAs (unfiltered)") +
+  scale_colour_manual(values=color_panel2) +
+  scale_y_continuous(limits=c(0,NA)) +
+  theme_point +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+
+# Absolute nr of miR (after 95% SP elimination cutoff)
+p3 <- ggplot(number_miR_detected,aes(x=reorder(GraphKit, desc(GraphKit)),y=miR_aboveTh, col=RNAisolation))+
+  geom_point() +
+  theme_point+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  labs(x="", y="# miRNAs (reproducibly detected)") +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel2) +
+  coord_flip() 
+  #theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+  #facet_wrap(~GraphKit, nrow = 1)
+
+# Relative nr of miR (after 95% SP elimination cutoff)
+test <- log_rescaling_CI(number_miR_detected, measurevar="miR_aboveTh", groupvar="GraphKit",conf=0.95, log_base=10)
+
+p4 <- ggplot(test, aes(x=GraphKit, y=mean_oriscale, colour=RNAisolation)) + 
+  geom_point() +  
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), width=.1) +
+  geom_line() +
+  labs(x="", y="relative # miRNAs",title="Relative number of miRNAs (filtered)") +
+  scale_colour_manual(values=color_panel2) +
+  scale_y_continuous(limits=c(0,NA)) +
+  theme_point +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+
+ggsave("miR_nofilter.pdf", plot=p1, path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+ggsave("miR_filtered.pdf", plot=p3, path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+
+write.table(spikes, "../data_raw/spikes_exRNAQC011.txt", quote = F, na = "",sep = "\t", row.names = F)
+```
+
+
+```{r miRcounts, echo=FALSE, fig.height=4.5, fig.width=8, fig.align="center", fig.keep="last", fig.cap="Number of miRNAs that are detected per 1.5 M reads. Left: all miRNAs that are detected with at least one count; right: miRNAs that are reproducibly detected (≥ precision threshold that eliminates 95% of single positives). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+#grid_arrange_shared_legend(p1 + scale_y_continuous(limits=c(0,400)),
+#                           p3 + scale_y_continuous(limits=c(0,400)))
+grid.arrange(p1 + scale_y_continuous(limits=c(0,400)) + theme(legend.position="none"), 
+             p3 + scale_y_continuous(limits=c(0,400)) + theme(legend.position="none"), nrow=1)
+```
+
+```{r z_score_miR}
+# normal z-score calculation 
+## calculate individual z-score for all data points
+tmp <- cbind("SampleID"=paste(number_miR_detected$SampleID),
+             "GraphKit"=paste(number_miR_detected$GraphKit),
+             "miR_count"=paste(scale(number_miR_detected$miR_aboveTh, center=T, scale=T))) %>% as.tibble(.) %>% 
+  type_convert(.) #convert columns with all numbers to type "dbl"
+## add these to the z-score df
+z_indiv <- left_join(z_indiv, tmp, by=c("SampleID","GraphKit"))
+rm(tmp)
+
+
+# robust z-score calculation
+## Calculate robust z scores to account for small sample sizes
+## First for endogenous efficiency
+robust_z <- robzscore(number_miR_detected,"miR_aboveTh")
+tmp <- cbind(GraphKit = paste(number_miR_detected$GraphKit), SampleID=paste(number_miR_detected$SampleID), miR_count=robust_z) %>%
+  as.tibble(.) %>% type_convert(.)
+## add these to robust z-score df
+z_indiv_robust <- left_join(z_indiv_robust, tmp, by=c("SampleID","GraphKit"))
+rm(tmp, robust_z)
+
+## variable correlation
+#cor_z_scores <- cor(z_indiv$concentration, z_indiv_robust$concentration, method = "spearman")
+rm(list=grep("tmp|test|number_genes",ls(),value=T))
+rm(p,p1,p2,p3,p4)
+```
+
+
+## Area-left-of-curve{.tabset}
+ALC (area-left-of-curve) **as repeatability metric** (see Mestdagh et al., 2014, Nature Methods). Compare two technical replicates at a time, only considering miRNAs that reach the precision threshold (which eliminates 95% of single positives) in at least one of the samples and ≥ 1 count in the other sample. Replace all zero counts by NA. Determine the absolute value of the log2 ratios of counts for each miRNA. Plotted are the (percentage) ranks of these absolute log2 ratios. The faster the curve reaches 100% (the smaller the ALC), the better. A small ALC indicates that the replicates give similar counts for each miRNA.
+
+**Scoring: lower ALC = better precision**
+
+### Individual ALC plots
+```{r ALCcalculation, fig.height=2, fig.width=2, message=FALSE, warning=FALSE, fig.show="hold"}
+
+double_positives<-miRNAs %>% replace(., is.na(.),0) %>% #first change NAs to 0 
+  mutate_if(is.numeric, funs(round)) #round everything to nearest integer
+   
+double_positives<-double_positives[rowSums(double_positives %>% select_if(is.numeric) > 1, na.rm=T)>0,] # keep only the rows where at least one sample has more than 1
+
+ALC_input_all <- data.frame()
+for (duplicate_type in unique(sample_annotation$GraphKit)){
+  sample_duplicates<-sample_annotation%>% 
+    filter(GraphKit==duplicate_type) %>%
+    dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
+  cutoff95SP <- cutoff_kit[cutoff_kit$GraphKit==duplicate_type,]$median_th
+  if(nrow(sample_duplicates)>1){
+    #print(duplicate_type)
+    #double_positives_sample<-double_positives %>% dplyr::select(MIMATID,sample_duplicates$UniqueID) # only keep the replicates of one type
+    
+    samples_comb <- combn(sample_duplicates$UniqueID,2) #compare 2 of the 3 samples at a time
+    for (n_col in 1:ncol(samples_comb)) {
+      #print(samples_comb[,n_col])
+      nr_runA <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID==
+                                                         samples_comb[1,n_col],]$TechnicalReplicate)
+      nr_runB <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID==
+                                                       samples_comb[2,n_col],]$TechnicalReplicate)
+      varname <- paste0("Rep",nr_runA,"_",nr_runB) #make a name so you can backtrace which replicates are compared
+      #print(varname)
+      double_positives_2repl <- double_positives %>% dplyr::select(MIMATID, paste(samples_comb[1,n_col]), paste0(samples_comb[2,n_col])) %>%
+        filter_if(is.numeric, all_vars(.>0)) %>% #keep only the 2 replicates of one kit and remove genes where not at least 1 of them has > 0 counts
+        filter_if(is.numeric, any_vars(.>cutoff95SP)) # remove genes where neither of the replicates reach the threshold that removes 95% of SP in that kit
+      correlation_samples<-double_positives_2repl %>%
+        mutate(log2_ratio=abs(log(get(samples_comb[1,n_col]),2)-log(get(samples_comb[2,n_col]),2))) %>%
+        dplyr::select(log2_ratio,MIMATID) #%>% drop_na()
+      ALC_input<-correlation_samples %>% arrange(log2_ratio) %>% # order by log2 ratio and then make a rank (counter) and rescale this to 1 (perc_counter)
+        #mutate(rank=percent_rank(log2_ratio)) %>% # this does not work: gives everything with log2ratio = 0 rank 0
+        mutate(counter = seq(1:nrow(double_positives_2repl)), GraphKit=duplicate_type, Replicates=varname) %>%
+        mutate(ReplID = paste0(GraphKit,"-",Replicates), perc_counter = counter/nrow(double_positives_2repl))
+      
+      ALC_input_all <- rbind(ALC_input_all, ALC_input)
+    }
+  }
+}
+
+max_ALC <-max(ALC_input_all$log2_ratio) # calculate the max ALC over everything (necessary for area calculation -> should always be the same in order to compare among kits)
+ALC <- ALC_input_all %>% group_by(GraphKit,Replicates) %>% 
+  dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC*length(MIMATID))) %>%
+  #dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC)) %>%
+  mutate(ReplID = paste0(GraphKit,"-",Replicates))
+
+for (replicates in unique(ALC_input_all$ReplID)) { # plot the ALC (= the colored part of the plot)
+  print(ggplot(ALC_input_all %>% dplyr::filter(ReplID==replicates) %>% 
+          mutate(log2_ratio_resc = log2_ratio/max_ALC))+
+        geom_line(aes(x=log2_ratio_resc,y=perc_counter))+
+        #facet_wrap(~ReplID) +
+        geom_ribbon(aes(x=log2_ratio_resc,ymin=perc_counter,ymax=1), fill=color_panel1[gsub("-.*$","",replicates)])+
+        geom_hline(aes(yintercept = 1))+
+        theme_classic()+
+        scale_x_continuous(limits=c(0,1)) + 
+        scale_y_continuous(expand = c(0, 0)) +
+        theme(legend.position = "none") +
+        labs(title=paste(replicates),
+             subtitle=paste("ALC:", round(ALC[ALC$ReplID==replicates,]$ALC_calc,2)), #print ALC for this particular comparison!
+             y="rank percentile",x="rescaled log2 ratio"))
+            
+}
+
+```
+
+### Overview ALC
+```{r ALC, fig.align="center", fig.width=6, fig.height=4, fig.cap="Precision based on ALCs (area-left-of-curve). The lower the ALC, the better (less difference between replicates). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+ALC <- ALC %>% arrange(GraphKit,ReplID) %>% mutate(Repl=c("RNA1","RNA3","RNA2")) %>% mutate(tmp_SampleID=paste0(GraphKit,"_",Repl)) ## just for easy integration later on order according to Graphkit and replicates (so first Repl1_2, then Repl1_3, then Repl2_3) and add a sampleID column like in other dfs
+#remark: if you have more or less replicates, change mutate(Repl) part above accordingly
+
+ALC <- left_join(ALC, sample_annotation[,c("SampleID","RNAisolation")], by=c("tmp_SampleID"="SampleID"))
+ALCplot <- ggplot(ALC %>% drop_na())+
+  geom_point(aes(y=ALC_calc,x=reorder(GraphKit,dplyr::desc(GraphKit)),color=RNAisolation),size=1.3)+
+  #geom_text_repel(aes(y=value,x=GraphKit), nudge_x=0.1)+
+  theme_point +
+  labs(y="ALC",x="")+
+  #theme(panel.grid.major.y=element_line(linetype = "dashed",color="lightgray"))+
+  scale_color_manual(values=color_panel2) +
+  theme(legend.position = "none") +
+  scale_y_continuous(limits=c(0,NA))
+
+#pdf(file=here::here("data_output","Kits_mRNA_ALC.pdf"), height=4, width=6)
+ALCplot + coord_flip()
+#ALCplot + theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))
+#dev.off()
+ggsave("ALC_smallRNA.pdf", plot=ALCplot + coord_flip(), path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+
+```
+
+```{r z_score_ALCgenesno0}
+# normal z-score calculation 
+## calculate individual z-score for all data points
+tmp <- cbind("SampleID"=paste(ALC$tmp_SampleID),
+             "GraphKit"=paste(ALC$GraphKit),
+             "neg_ALC" = as.numeric(paste(ALC$ALC_calc))  * (-1)) %>% #take negative value of ALC (so that higher = better)
+  as_tibble() %>% type_convert() %>%
+  mutate("precision_ALC" = scale(neg_ALC, center=T, scale=T)) 
+
+## add these to the z-score df
+z_indiv <- left_join(z_indiv, tmp %>% dplyr::select(-"neg_ALC"), by=c("SampleID","GraphKit"))
+
+# robust z-score calculation
+## Calculate robust z scores to account for small sample sizes
+robust_z <- robzscore(tmp, "neg_ALC")
+tmp2 <- cbind(GraphKit = paste(tmp$GraphKit), SampleID=paste(tmp$SampleID), "precision_ALC"=robust_z) %>% as.tibble(.) %>% type_convert(.)
+## add these to robust z-score df
+z_indiv_robust <- left_join(z_indiv_robust, tmp2, by=c("SampleID","GraphKit"))
+rm(tmp, tmp2, robust_z)
+
+## variable correlation
+#cor_z_scores <- cor(z_indiv$concentration, z_indiv_robust$concentration, method = "spearman")
+rm(ALC)
+
+rm(list=grep("tmp|test",ls(),value=T))
+```
+
+## Overview
+Based on robust z-scores (for each performance metric: higher robust z-score is better)
+
+### Correlation among metrics
+- Differences between kits are less pronounced for miRNAs than for mRNAs (see exRNAQC004). This also means that if the ranking of performance of kits slightly deviates in different metrics (as a result of small differences) - i.e. one kit scores better on first method while other kit scores slightly better for second metric - the correlation (r) between metrics will be low. 
+- Some remarks:
+  - Yield and efficiency are theoretical metrics: how well would the kit perform regardless of input and/or eluate volume restrictions (see [miRNA yield] and [Efficiency of kits])
+  - The two precision metrics (ALC and filter threshold) highlight a different aspect of precision: ALC shows how similar miRNA counts between replicates are (see [Area-left-of-curve]), while the threshold gives an idea of the amount of noise - from which count threshold onward can you "trust" count values (see [Filter threshold])
+
+```{r zcorrall, fig.width=6, fig.height=6, fig.align="center", fig.cap="Correlation among metrics based on robust z-scores. Spearman correlation with complete hierarchical clustering. (concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume)"}
+z_score_df_test <- z_indiv_robust %>% drop_na() %>% as.tibble() %>%
+  dplyr::select(-c("SampleID","GraphKit")) 
+colnames(z_score_df_test) <- gsub("_"," ", colnames(z_score_df_test))
+cor_z_scores <- cor(z_score_df_test %>% type_convert(.), method = "spearman")
+
+require("RColorBrewer")
+require("corrplot")
+#pdf(here::here("data_output/plots/metric_corr_indiv_smallRNA.pdf"), height = 6, width=6, useDingbats=F)
+corrplot(cor_z_scores, order="hclust", type="upper", 
+         hclust.method="complete",
+         tl.srt = 45, #text labels rotated 45 degrees
+         method="color", number.cex=0.8, 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col = "black", #text label color
+         tl.cex = 0.8, #text label size
+         #cl.pos = "n", #position of color labels ("n"=none)
+         cl.align.text="l", #align color labels to the left
+         cl.cex=0.7, #color label size
+         col=colorRampPalette(brewer.pal(8,"RdYlBu"))(100))
+#dev.off()
+#ggsave("Metric_corr_indiv.pdf", plot=ggplot2::last_plot(), path= here::here("data_output","plots"), height=6, width=6, dpi = 300, useDingbats=F)
+```
+
+```{r meanzcorr, echo=F, eval=F, fig.width=6, fig.height=6, fig.align="center", fig.cap="Correlation among median of robust z-scores per kit-volume combination. Spearman correlation with complete hierarchical clustering. (concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume)"}
+z_score_df_test <- z_indiv_robust %>% drop_na() %>% as.tibble() %>% 
+  dplyr::group_by(GraphKit) %>% summarise_if(is.numeric, median) %>%
+  dplyr::select(-"GraphKit")
+colnames(z_score_df_test) <- gsub("_"," ", colnames(z_score_df_test))
+cor_z_scores <- cor(z_score_df_test %>% type_convert(.), method = "spearman")
+
+#pdf(here::here("data_output/plots/metric_corr_median_smallRNA.pdf"), height = 6, width=6, useDingbats=F)
+corrplot(cor_z_scores, order="hclust", type="upper", 
+         hclust.method="complete",
+         tl.srt = 45, #text labels rotated 45 degrees
+         method="color", number.cex=0.8, 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col = "black", #text label color
+         tl.cex = 0.8, #text label size
+         #cl.pos = "n", #position of color labels ("n"=none)
+         cl.align.text="l", #align color labels to the left
+         cl.cex=0.7, #color label size
+         col=colorRampPalette(brewer.pal(8,"RdYlBu"))(100))
+#dev.off()
+
+```
+
+
+### Comparison of kits
+
+```{r heatmap, fig.align="center", fig.width=8, fig.height=4, fig.cap="Comparison of kit performance based on robust z-scores. Higher means a better performance. Complete hierarchical clustering based on Euclidean distance. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input; concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume; average: average z score over all metrics)"}
+tmp <- z_indiv_robust %>% drop_na() %>% arrange(GraphKit) %>%
+  dplyr::group_by(GraphKit) %>% summarise_if(is.numeric, mean) %>%
+  left_join(unique(dplyr::select(sample_annotation, c("GraphKit"#,"input_volume"="PlasmaInputV"))))%>%
+  )))) %>%
+  column_to_rownames("GraphKit") 
+
+colnames(tmp) <- gsub("_"," ",colnames(tmp))
+  
+#add an average z-score row
+tmp2 <- tmp %>% rowwise() %>% dplyr::summarise(average = mean(c_across(where(is.numeric))))
+
+# annotation_row <- unique(data.frame(GraphKit=sample_annotation$GraphKit)) %>%  #input_volume=sample_annotation$PlasmaInputV, eluate_volume=sample_annotation$EluateV))
+#   as_tibble() 
+# annotation_row$type <- as.factor(ifelse((str_detect(pattern="MAP|MAX", string=paste(annotation_row$GraphKit))), "automated", "manual"))
+# annotation_row <- annotation_row %>% column_to_rownames("GraphKit")
+# annotation_row_color <- list(type = c(manual="white", automated="grey"))
+
+require(pheatmap)
+#this one does not rescale values within one measure variable
+#pdf(here::here("data_output/plots/overview_performance_withnrs.pdf"), height = 3.5, width=7,  useDingbats=F)
+custom_palette = colorRampPalette(rev(brewer.pal(n = 7, name =
+  "RdBu")))(100)
+#make sure the middle color is positioned around 0
+myBreaks <- c(seq(min(tmp), 0, length.out=ceiling(length(custom_palette)/2) + 1), 
+              seq(max(tmp)/length(custom_palette), max(tmp),
+                  length.out=floor(length(custom_palette)/2)))
+
+# define the annotation
+annotation_row = data.frame(
+                    average = c(tmp2$average))
+rownames(annotation_row) = rownames(tmp)
+ann_colors = list(
+    average = c("white", "black"))
+
+pheatmap::pheatmap(t(tmp), 
+         #color= colorRampPalette(rev(brewer.pal(n = 7, name ="RdBu")))(100), #default
+         color = custom_palette,
+         breaks = myBreaks,
+         #color = colorRampPalette(brewer.pal(n=10, "Greys"))(10),
+         #scale = "row",
+         #cluster_rows = F,
+         annotation_col= annotation_row, 
+         display_numbers = T, number_format = "%.1f", fontsize_number=8, number_color="black",
+         annotation_colors = ann_colors[1])
+#dev.off()
+#ggsave("Overview_performance.pdf", plot=ggplot2::last_plot(), path= here::here("data_output","plots"), height=5, width=6, dpi = 300, useDingbats=F)
+```
+
+```{r rescaledheatmap, fig.align="center", fig.width=8, fig.height=4, fig.cap="Comparison of kit performance based on rescaled robust z-scores. Robust z-scores were rescaled to range of [0,1] to emphasize differences within a metric. Closer to 1 means a better performance. Complete hierarchical clustering based on Euclidean distance. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input; concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume; average: average z score over all metrics)"}
+tmp_resc <- apply(tmp, 2, rescale) # rescale all metrics (columns) to values between 0 and 1
+annotation_row = data.frame(
+                    average = rescale(c(tmp2$average), to=c(0,1)))
+rownames(annotation_row) = rownames(tmp)
+ann_colors = list(
+    average = c("white", "black"))
+
+#pdf(here::here("data_output/plots/overview_performance_rescaled.pdf"), height = 3.5, width=7, useDingbats=F)
+pheatmap(t(tmp_resc), 
+         #color = colorRampPalette(brewer.pal(n=10, "Greys"))(10),
+         color = custom_palette,
+         #scale = "column",
+         #cluster_rows = F,
+         annotation_col= annotation_row, 
+         #treeheight_col = 0,
+         annotation_colors = ann_colors[1])
+#dev.off()
+#ggsave("overview_performance_rescaled.pdf", plot=ggplot2::last_plot(), path= here::here("data_output","plots"), height=5, width=6, dpi = 300, useDingbats=F)
+```
+
+
+# Selection for phase 2
+The RNA isolation for phase 2 is based on robust z-score transformed metric for sensitivity (# detected genes, see [Number of miRNAs]) and for precision (ALC, see [Area-left-of-curve]). Higher z-score = better
+
+We looked at both metrics but in close calls, the sensitivity was given a higher weight. We also wanted to include at least one kit which is able to purify miRNA in case you have less than 1 ml of plasma as it is not always possible to collect or use multiple ml. 
+
+Selection: Maxwell (**MAX0.5**) & miRNeasy serum/plasma advanced (**MIRA0.6**)
+
+```{r kitselection, fig.align="center", fig.height=5, fig.width=7, fig.cap="Robust z-scores (median per RNA isolation kit) for sensitivity (number of miRNAs) (x) and precision (ALC, area-left-of-curve) (y). MIRA0.6 and MAX0.5 kits are selected for phase II. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; MIRVE0.1: mirVana PARIS kit with enrichment, 0.1 ml input; MIRVE0.625: mirVana PARIS kit with enrichment, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+# ggplot(z_indiv, aes(x=gene_count, y=precision_ALC, col=GraphKit)) + geom_point() + theme_point + ggrepel::geom_text_repel(aes(label=GraphKit))  + scale_colour_manual(values=color_panel1) + theme(legend.position="none")
+# 
+# z_indiv_med <- z_indiv %>% group_by(GraphKit) %>% summarise_if(is.numeric, median, na.rm=T)
+# 
+# #pdf("data_output/selection_kits_mRNA_regularz.pdf", height=5, width=6)
+# ggplot(z_indiv_med, aes(x=gene_count, y=precision_ALC, col=GraphKit)) + geom_point() + theme_point + ggrepel::geom_text_repel(aes(label=GraphKit)) + scale_colour_manual(values=color_panel1) + theme(legend.position="none") + labs(x="sensitivity (gene count)", y="precision (ALC)", subtitle="Regular z-scores (median per kit)")
+#dev.off()
+
+
+z_indiv_robust_med <- z_indiv_robust %>% group_by(GraphKit) %>% summarise_if(is.numeric, median, na.rm=T) %>% left_join(unique(sample_annotation %>% dplyr::select(c("GraphKit", "RNAisolation"))))
+#pdf("data_output/selection_kits_mRNA_robustz.pdf", height=5, width=6)
+ggplot(z_indiv_robust_med, aes(x=miR_count, y=precision_ALC, col=RNAisolation)) +
+  geom_point() + theme_point + 
+  ggrepel::geom_text_repel(aes(label=GraphKit)) + 
+  scale_colour_manual(values=color_panel2) + 
+  #theme(legend.position="none") + 
+  scale_x_continuous(limits=c(-3.2,3.2)) + scale_y_continuous(limits = c(-3.2,3.2)) +
+  theme(legend.position = "none") +
+  labs(x="sensitivity (miRNAs)", y="precision (ALC)")
+
+ggsave("kit_selection_smallRNA.pdf", plot=ggplot2::last_plot(), path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
+#dev.off()
+```
