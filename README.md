@@ -1,6 +1,4 @@
 # exRNAQC
-Collaborators: Annelien Morlion, Celine Everaert, Francisco Avila Cobos & Ruben Van Paemel. 
-Questions concerning the GitHub structure can be addressed to any of us.
 
 ## Full Length RNAseq
 ### Rationale
