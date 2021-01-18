@@ -1,13 +1,14 @@
 # exRNAQC
 
-## exRNAQC004: kit study - RNA access
-Data analyses: [html report](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.html) & [pdf report](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.pdf)
+## Kit study
+### RNA access
+Data analyses: [exRNAQC004 html](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.html) & [exRNAQC004 pdf](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.pdf)
+### Small RNA seq
+Data analyses: [exRNAQC011 html](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC011/exRNAQC011.html) & [exRNAQC011 pdf](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC011/exRNAQC011.pdf)
 
-## exRNAQC005: tube study - RNA access
-Data analyses: [html report](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC005/exRNAQC005.html)
+## Tube study
+### RNA access
+Data analyses: [exRNAQC005 html](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC005/exRNAQC005.html)
 
-## exRNAQC011: kit study - small RNA seq
-Data analyses: [html report](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC011/exRNAQC011.html) & [pdf report](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC011/exRNAQC011.pdf)
-
-## exRNAQC011: tube study - small RNA seq
-Data analyses: [html report](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC013/exRNAQC013.html)
+### Small RNA seq
+Data analyses: [exRNAQC013 html](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC013/exRNAQC013.html)
