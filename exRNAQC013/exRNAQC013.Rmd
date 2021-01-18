@@ -1,0 +1,1266 @@
+---
+title: 'exRNAQC013: blood collection tube study, small RNA'
+author: "Ruben Van Paemel on behalf of the exRNAQC study group"
+date: "15/11/2020"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: kate
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    latex_engine: lualatex
+    pandoc_args: --listings
+    toc: yes
+subtitle: "Novaseq6000, subsampled to 800 000 reads"
+---
+
+# Introduction 
+## Experimental setup
+For the evaluation of the different blood collection tubes, blood was drawn from 9 healthy volunteers (3 volunteers for the preservation tubes, 3 volunteers for the non-preservation plasma tubes and 3 volunteers for the non-preservation serum tubes). The order of all blood tubes was randomized per donor. All blood tubes were filled to the volume recommended by the manufacturer. We refer to the manuscript and supplemental files for more information about experimental setup. 
+
+*Preservation tubes.* We included 5 different preservation tubes (Streck cell-free RNA BCT, Streck cell-free DNA BCT, PAXgene Blood ccfDNA Tube, Roche cell-free DNA Collection tube and Biomatrica LBgard blood tube) with processing at 3 different timepoints after blood collection (immediately (T0), after 24 hours (T24) and after 72 hours (T72)). Thus, 15 blood tubes were drawn per healthy volunteer. 
+
+*Non-preservation plasma tubes.* We included 4 different non-preservation plasma tubes (BD Vacutainer K2E EDTA spray, Vacuette EDTA gel, BD Vacutainer ACD-A and Vacuette Sodium citrate 3.2%) with processing at 3 different timepoints after blood collection (immediately (T0), after 4 hours (T4) and after 16 hours (T16)). Thus, 12 blood tubes were drawn per healthy volunteer. 
+
+*Non-preservation serum tube.* We included 1 non-preservation serum tube (BD Vacutainer SST II Advance) with processing at 3 different timepoints after blood collection (immediately (T0), after 4 hours (T4) and after 16 hours (T16)). Thus, 3 blood tubes were drawn per healthy volunteer. All tubes were collected from one antecubital vein with the BD Vacutainer push button 21G with 12” tube butterfly needle system.
+
+When 15 tubes were collected, 7 tubes were collected from one antecubital vein and 8 tubes were collected from the contralateral antecubital vein with the BD Vacutainer push button 21G, 7” tube with pre-attached holder tube butterfly needle system. When 12 tubes were collected, 6 tubes were collected from one antecubital vein and 6 tubes were collected from the contralateral antecubital vein with the BD Vacutainer push button 21G with 12” tube butterfly needle system.
+
+
+## Metric selection
+Five metrics were evaluated. In order to select the tubes which remains most stable across time points, we calculated for every tube and donor the fold change across different timepoints (excluding T24-T72 or T04-T16). Thus, six fold-change values were obtained per tube. These were visualized and tubes were ordered based on the mean of these six values. 
+
+1. Hemolysis (see exRNAQC005, blood tube study, mRNA data-analysis)
+2. Relative RNA concentration, based on endogenous reads vs RC spikes (see [Fold changes for small RNA concentration in plasma])
+3. Absolute number of miRNAs detected (after setting a count cut-off of 3 counts, based on the RNA isolation kit study (exRNAQC011), see [Fold changes of number of miRNAs])
+4. Percentage of total counts going to miRNAs (see [Fold changes of biotypes])
+5. ALC calculation between different timepoints (see [Area left of the curve (ALC)])
+
+An overview of the mean fold changes is presented at the end of this analysis (see [Fold change summary of 5 performance metrics])
+
+## RMarkdown set-up
+First, basic parameters are set up in this RMarkdown, such as loading dependencies, setting paths and setting up a uniform plot structure. 
+
+Most plots in this RMarkdown file are made interactive with ggplot. PDF versions of most plots are in this GitHub repository under `./plots/`
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+require(biomaRt)
+require(reshape2)
+require(ggbeeswarm)
+require(readxl)
+require(broom)
+require(RColorBrewer)
+require(scales)
+require(RCurl)
+require(plotly)
+require(ggrepel)
+require(gridExtra)
+require(ggExtra)
+require(ggplot2)
+require(RCurl)
+require(plotly)
+require(ggpubr)
+require(DT)
+require(tidyverse)
+source("../../Resources/HelperFunctions.R")
+# plot style
+theme_point<-theme_bw()+theme(strip.background = element_blank())
+theme_bar<-theme_bw()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.line.x = element_blank())
+theme_boxplot<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank(),axis.line.x = element_blank(),legend.position = "none")
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
+color_panel1 <-  c("#039748","#039748","#ffbf00","#ffbf00","#e35d6a","#e35d6a","#5bb75b","#5bb75b","#428bca","#428bca","#23496b","#23496b","#cc2028","#cc2028","#e87810")
+color_panel2 <-  brewer.pal(10, name = "Paired")
+names(color_panel2) <- c("serum","Biomatrica","EDTA separator","EDTA","Citrate","RNA Streck","Roche","DNA Streck", "PAXgene", "ACD-A")
+full_nr <- format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
+
+
+color_panel_spikes <- c("#e35d6a","gray","#5bb75b","#428bca")
+names(color_panel_spikes) <- c("LP1","MIMAT","RC1","RC2")
+color_panel_spikes2 <- c("#23496b","#ffbf00","gray","#ffbf01","orange","#23496b")
+names(color_panel_spikes2) <- c("LP","RC","MIMAT","RC1","RC2","LP1")
+
+data_path <- "../data/runs/800ksubsamp/mergedTxts/"
+log_path <- "../data/runs/800ksubsamp/"
+
+
+full_nr <- format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
+source("../../Resources/HelperFunctions.R")
+
+annot <- "../Annotation_exRNAQC013.xlsx"
+sample_annotation <- read_excel(annot, sheet = "Annotation_exRNAQC013", skip = 0, col_names = TRUE )
+sample_annotation<-sample_annotation %>% mutate(SampleID= paste0(GraphTube,"_",BiologicalReplicate, "_",TimeLapse))
+sample_annotation<-sample_annotation %>% mutate(PlasmaInputVml= PlasmaInputV/1000)
+sample_annotation$TubeType <- ifelse(sample_annotation$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+sample_annotation$GraphTube <- paste0(sample_annotation$GraphTube, "_", sample_annotation$TimeLapse)
+sample_annotation <- sample_annotation %>% filter(!is.na(index_prct))
+
+```
+
+
+```{r}
+# fold change function + make plots
+generateFC <- function(input_df, variable, dfName, AC = FALSE){
+fold_change_input_all <- data.frame() 
+for (duplicate_type in unique(sample_annotation$Tube)){
+  sample_duplicates<-sample_annotation%>% filter(Tube==duplicate_type)
+  if(nrow(sample_duplicates)>1){
+    #print(duplicate_type)
+    #double_positives_sample <-double_positives %>% dplyr::select(MIMATID,sample_duplicates$UniqueID) 
+    input_df_sample <- left_join(sample_duplicates, input_df)
+    # only keep the replicates of one type
+   
+    samples_comb <- combn(sample_duplicates$UniqueID,2) #compare 2 of the 3 samples at a time
+    for (n_col in 1:ncol(samples_comb)) {
+      #print(samples_comb[,n_col])
+      nr_runA <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$TimeLapse)
+      nr_runB <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$TimeLapse)
+      RepA <- sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$BiologicalReplicate
+      RepB <- sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$BiologicalReplicate
+     if ((RepA == RepB)){
+      varname <- paste0("T",nr_runA,"_",nr_runB) #make a name so you can backtrace which replicates are compared
+      #print(varname)
+      compareVar <- input_df %>% filter(UniqueID == paste(samples_comb[1,n_col]) | UniqueID == paste0(samples_comb[2,n_col])) 
+      if (AC == TRUE){
+      plot = "absolute change"
+      intercept = 0
+      if (is.na((abs(compareVar[[variable]][1]) > abs(compareVar[[variable]][2])))){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange=NA)
+      }
+      else if (abs(compareVar[[variable]][1]) >= abs(compareVar[[variable]][2])){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][1])-abs(compareVar[[variable]][2]))
+      } else {
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][2])-abs(compareVar[[variable]][1]))
+      }}
+      else if (AC == FALSE){
+      plot = "fold change"
+      intercept = 1
+      if (is.na((abs(compareVar[[variable]][1]) > abs(compareVar[[variable]][2])))){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange=NA)
+      }
+      else if (abs(compareVar[[variable]][1]) >= abs(compareVar[[variable]][2])){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][1])/abs(compareVar[[variable]][2]))
+      } else {
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][2])/abs(compareVar[[variable]][1]))
+      }}
+      
+      FC_input<-correlation_samples %>% 
+        mutate(Tube=duplicate_type, Replicates=varname, BiologicalReplicate = paste0(RepA,"-",RepB)) %>%
+        mutate(ReplID = paste0(Tube,"-",Replicates))
+      FC_input <- FC_input %>% mutate(inputType = paste0(dfName))
+      if (nrow(FC_input) == 2){
+          fold_change_input_all <- rbind(fold_change_input_all, as.data.frame(FC_input))
+        }
+      }
+    }
+  }
+}
+FC <- fold_change_input_all %>% dplyr::group_by(Tube,Replicates,BiologicalReplicate) %>%
+  mutate(ReplID = paste0(Tube,"-",Replicates)) %>% select(c(ReplID, foldchange, Replicates, inputType)) %>% distinct(ReplID, .keep_all = TRUE)
+FC$TimePoint <- ifelse(FC$Replicates %in% c("T24_0", "T0_24", "T0_04", "T04_0"), "1st timepoint", ifelse(FC$Replicates %in% c("T72_0", "T0_72", "T0_16", "T16_0"), "2nd timepoint", NA))
+FC$TubeType <- ifelse(FC$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+                       
+print(ggplot(FC %>% filter(!is.na(TimePoint)), aes(x=reorder(Tube,foldchange, FUN = function(x) -mean(x, na.rm = TRUE)), y = foldchange)) + 
+          geom_boxplot() + 
+          geom_beeswarm(groupOnX=TRUE, size = 2.5, aes(col = TimePoint, shape = TubeType)) + 
+          geom_hline(yintercept = intercept, linetype = "dashed", color = "gray") + 
+          labs(subtitle = "ordered by mean (white triangle)", title = paste0(plot, " of ", dfName), y = paste0(plot), x = NULL, col = "comparison", shape = "tube type") +
+          scale_fill_manual(values=color_panel) + 
+          theme_point +theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)) +
+          stat_summary(
+          geom = "point",
+          fun.y = "mean",
+          col = "black",
+          size = 2,
+          shape = 24,
+          fill = "white"
+        )
+      )
+return(FC)
+}
+```
+
+
+## Reading in count data
+Counts obtains were preprocessed and merged into seperate count matrices (see `makesFiles.R` and [Pipeline parameters and MultiQC reports]).
+
+
+```{r readdata, warning=FALSE, error=FALSE}
+miRNAs <- data.table::fread(paste0(data_path, "allmiRs_subs.txt"), header=T, data.table = F)
+spikes <- data.table::fread(paste0(data_path, "allspikes_subs.txt"), header=T, data.table = F)
+reads <- data.table::fread(paste0(data_path, "allreads_subs.txt"), header=T, data.table = F)
+contam <- data.table::fread(paste0(data_path, "allcontam_subs.txt"), header=T, data.table = F)
+```
+
+
+
+# Hemolysis {.tabset}
+Hemolysis was measured with Nanodrop (absorbance at 414 nm) in plasma across all tubes. Overall, we can see that there is less hemolysis in non-preservation tubes and there is more hemolysis in preservation tubes and at later timepoints. Hemolysis is also our first metric. Furthermore, Spearman rank correlation between replicate platelet measurements is high (R = 0.82).
+
+## Hemolysis in plasma
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=Hemolysis_PFP, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="hemolysis in PFP - split by tube", y = "abs at 414 nm", col = "", x = NULL)
+ggplotly(p1)
+ggsave("./plots/hemolysis_PFP_lineplot_byTube.pdf", plot = p1, dpi = 300)
+hemolysis_lineplot <- ggplot2::last_plot()
+
+p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=Hemolysis_PFP, col=Tube, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="hemolysis in PFP - split by donor", y = "abs at 414 nm", col = "", x = NULL)
+ggplotly(p1)
+ggsave("./plots/hemolysis_PFP_lineplot_byDonor.pdf", plot = p1, dpi = 300)
+```
+
+## Fold changes for hemolysis
+```{r}
+tmp_summary <- sample_annotation %>% group_by(GraphTube) %>% dplyr::summarize(mean_Hemolysis_PFP= mean(Hemolysis_PFP), sd_Hemolysis_PFP=sd(Hemolysis_PFP)) %>% mutate(CV_Hemolysis_PFP = sd_Hemolysis_PFP/mean_Hemolysis_PFP*100) %>% left_join(unique(dplyr::select(sample_annotation, c("Tube","GraphTube"))), by="GraphTube")
+FC <- generateFC(input_df = sample_annotation %>% filter(!is.na(Hemolysis_PFP)), variable = "Hemolysis_PFP", dfName = "hemolysis in PFP")
+names(FC)[names(FC) == 'foldchange'] <- 'hemolysis_FC'
+FC_all <- FC %>% select(-inputType)
+ggsave("./plots/hemolysis_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+hemolysis_FC_plot <- ggplot2::last_plot()
+```
+
+# Sample annotation
+An overview of the samples included in this experiment.
+
+```{r annotation, warning=FALSE, message=FALSE, echo=TRUE}
+datatable(sample_annotation, rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Sample annotation table")
+```
+
+
+# Sequencing and preprocessing
+## Run metrics
+First, we performed "preruns" with a Nextseq 500 mid-output kit, to determine whether the samples could be equimolarly pooled. This seemed not be the case, the spread of the % reads identified was too large (1000 fold difference). Thus, we decided to pool based on the concentration of the RC and LP spikes, measured with qPCR. For additional information, see manuscript and supplemental files. 
+
+- NSQ_Run641:  high-output run of donor 1 of each tube type (= 3 donors, preservation tubes + non-preservation tubes + serum tube)
+- NSQ_Run686:  high-output run of donor 2 of each tube type (= 3 donors, preservation tubes + non-preservation tubes + serum tube)
+- exRNAQC013_POOL3:  high-output run run of donor 3 of each tube type (= 3 donors, preservation tubes + non-preservation tubes + serum tube)
+
+For platelet and hemolysis measurements, see exRNAQC005 (blood tube study RNA exome, mRNA).
+
+*Indexing QC.* After pooling based on spike concentration, there is a very uneven distribution of sequencing reads, with up to 1000 fold difference between the highest and the lowest sample.
+
+```{r indexingQC, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=9}
+
+p1 <- ggplot(sample_annotation,aes(x=SampleID,y=index_prct, color = Tube))+
+  geom_point()+
+  ylim(0,NA) + theme_bar+ theme(axis.text.x=element_blank()) +
+  labs(y = "% reads per sample", title="basespace indexing %", col = NULL, fill = NULL)+
+  scale_color_manual(values=color_panel) + facet_wrap(~ RunID, scales = "free")
+ggplotly(p1)
+ggsave("./plots/BasespaceIndexingPrct.pdf", plot = p1, dpi = 300)
+
+p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=index_prct, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))+
+  labs(y = "% reads per sample", title="basespace indexing %", col = "", x = NULL)+
+  scale_y_log10()
+ggplotly(p1)
+ggsave("./plots/BasespaceIndexingPrct_lineplot.pdf", plot = p1, dpi = 300)
+
+```
+
+```{r}
+files<-list.files(log_path,recursive=TRUE)
+files<-files[grep("*line_count.txt", files)]
+reads_df <- data.frame(total_reads = as.numeric(), total_reads_after_qc = as.numeric(), UniqueID = as.character())
+for(i in 1:length(files)){
+  name_sample <- unlist(strsplit(unlist(strsplit(files[i], "/"))[1], "-"))[1]
+  #name_sample<-gsub(".*/","",sub("-[0-9]*$","",sub("_spikes.txt","",files[i])))
+  tmp<-read.table(paste0(log_path,files[i]), header=T, sep="\t", comment.char = "", skip = 0)
+  #tmp<-read.table(paste0(log_path,files[i]), header=F, sep=":", comment.char = "", skip = 4, nrows = 3)
+  total_reads_after_qc <- (tmp$qc_lines)/4
+  total_reads_start <- (tmp$orig_lines)/4
+  tmp <- data.frame(UniqueID = name_sample, total_reads = total_reads_start, total_reads_after_qc = total_reads_after_qc)
+ reads_df <- bind_rows(reads_df, tmp)
+}
+
+files<-list.files(log_path,recursive=TRUE)
+files<-files[grep("*read_count_new", files)]
+mapped_df <- data.frame(aligned_reads = as.numeric(), UniqueID = as.character())
+for(i in 1:length(files)){
+  name_sample <- unlist(strsplit(unlist(strsplit(files[i], "/"))[1], "-"))[1]
+  tmp<-read.table(paste0(log_path,files[i]), header=T, sep="\t", comment.char = "", skip = 0)
+  mapped_reads <- tmp[1,2]
+  tmp <- data.frame(UniqueID = name_sample, aligned_reads = mapped_reads)
+ mapped_df <- bind_rows(mapped_df, tmp)
+}
+
+mapped_df <- merge(reads_df, mapped_df, by = "UniqueID")
+
+mappedSpikes <- colSums(spikes[,-1], na.rm = TRUE) %>% melt()
+mappedSpikes$UniqueID <- rownames(mappedSpikes)
+colnames(mappedSpikes) <-c("spikeCounts", "UniqueID")
+
+mapped_df <- merge(mapped_df, mappedSpikes)
+mapped_df$aligned_reads_plus_spikes <- mapped_df$aligned_reads+ mapped_df$spikeCounts
+
+mapped_df$prct_aligned <- (mapped_df$aligned_reads/800000)*100
+mapped_df$prct_aligned_plus_spikes <- (mapped_df$aligned_reads_plus_spikes/800000)*100
+
+mapped_df_annot <- merge(sample_annotation, mapped_df, by = "UniqueID")
+mapped_df_melt <-mapped_df %>% melt(value.name = "reads")
+mapped_df_melt_annot <- full_join(mapped_df_melt, sample_annotation, by = "UniqueID")
+
+mapped_df_save <- merge(sample_annotation %>% select(UniqueID, SampleID), mapped_df, by = "UniqueID")
+write_tsv(mapped_df_save, "./smallRNA_table.tsv")
+```
+
+
+## Pipeline parameters and MultiQC reports
+MultiQC reports of the pipeline can be found in this GitHub repository under `logs/20200117.logs/*mulitqc.html`
+
+The script of the pipeline to see the parameters can be found in this GitHub repository under `logs/20200117.logs/smallRNASeq_preprocessing.py` and `logs/20200117.logs/submitJob.sh`.
+
+All fastq files (after adaptor trimming and other QC) were subsampled to 800 000 reads (based on the sample with the lowest amount of reads across all samples). This results in a substantial reduction of reads across all samples. Reads were subsampled after adaptor trimming and other QC.
+
+
+```{r}
+pd <- position_dodge(0.2)
+p1 <- ggplot(mapped_df_melt_annot %>% filter(variable != "prct_aligned"),aes(x=reorder(variable, desc(variable)),y=reads, group = PlasmaID, color = Tube))+
+	   geom_line(position = pd)+
+	  geom_point(position = pd) +
+	  facet_wrap(~RunID, ncol = 3)+
+	  labs(title="Reads per sequencing run", y = "# reads", x = "stage in pipeline", col = NULL) +
+	  theme_bar+
+    #facet_wrap(~TimeLapse+TubeType, scales = "free", ncol = 3)+
+    theme(axis.text.x=element_text(angle=90, hjust=1)) +
+    scale_x_discrete(labels = c("total_reads", "total_reads_after_qc", "aligned_reads_after_subSamp"), limits=c("total_reads", "total_reads_after_qc", "aligned_reads"))+
+	  scale_color_manual(values=color_panel) + scale_y_continuous(trans = "log10", lim = c(1e4,1e8))
+
+ggplotly(p1)
+
+ggsave("./plots/readsInPipeline.pdf", plot = p1, dpi = 300)
+```
+
+
+## Mapped reads
+Further visualisation of the percentage of mapped reads shows varying mapping percentage. Overall, mapping % is lower in non-preservation tubes. In some conditions, we can also see a time-impact of the mapping percentage (e.g. RNA Streck).
+
+We investigated the impact of the mapping percentage in several ways:
+
+- We used [fastq-screen](https://www.bioinformatics.babraham.ac.uk/projects/fastq_screen/) to look for contamination in the libraries. 
+- We used a combination of fastq-screen and FastQC to investigate the most abundant unmapped sequences. Only 3-5% of unmapped reads consisted of one (adaptor) sequence. We used BLAST to investigate several sequences, but found only small RNA reads that were not mapped due to mismatches (mismatches are not allowed in the current pipeline).
+- We plotted the mapping percentage vs. the total reads (total reads are a surrogate for input RNA, because we did not pool equimolarly). There is some trend of samples with more reads having a higher mapping percentage.
+
+Overall, the consensus was to further proceed with the data-analysis and not to subsample based on mapped percentage.
+
+``` {r}
+p1 <- ggplot(mapped_df_annot, aes(x=GraphTube,y=prct_aligned,col=Tube, text= UniqueID)) +
+  geom_point() +
+  theme_point +
+    facet_wrap(~TubeType, scales = "free", ncol = 3)+
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_y_continuous(limits=c(0,100),labels=full_nr) +
+  scale_color_manual(values=color_panel2) +
+  labs(x="",y="mapped reads (% total)", title = "percentage mapped reads", col = "tube")
+
+ggplotly(p1, tooltip = "text")
+ggsave("./plots/mappingPrct.pdf", plot = p1, dpi = 300)
+
+p1 <- ggplot(mapped_df_annot,aes(x=TimeLapse,y=prct_aligned, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))+
+  labs(x="",y="mapped reads (% total)", title = "percentage mapped reads",col = "", x = "time point")
+ggplotly(p1)
+ggsave("./plots/mappingPrct_lineplot.pdf", plot = p1, dpi = 300)
+
+p1 <- ggplot(mapped_df_annot, aes(x = total_reads, y = prct_aligned)) + geom_point(aes(color = Tube)) + theme_point + labs(y = "% mapped", x= "total reads", title = "mapping percentage vs total raw reads", col = NULL) +   scale_color_manual(values=color_panel)
+
+ggplotly(p1)
+ggsave("./plots/mappingPrct_vs_rawreads.pdf", plot = p1, dpi = 300)
+
+# lowest number of reads ( = level to subsample to)
+print("Level to subsample to:")
+mapped_df_melt_annot %>% filter(variable == "total_reads") %>% select(reads) %>% min()  # level to subsample to 
+```
+
+
+```{r}
+spikes_sum <- spikes %>% gather(key="UniqueID",value="spikecounts",-"spikeID") %>% 
+  group_by(UniqueID) %>% dplyr::summarise(counts=sum(spikecounts, na.rm=T)) %>%
+  #spread(key=UniqueID,value=spikesum) %>% 
+  mutate(reads="spikes")
+
+# add sum of spikes to the total mapped reads (these were not considered as "mapped" yet)
+reads_complete <- reads %>% gather(key="UniqueID",value="counts",-"reads") %>% 
+  rbind(., spikes_sum) %>%
+  spread(key=reads, value=counts) %>% 
+  mutate(all_mapped = mapped + spikes) %>% 
+  gather(key="reads",value="counts",-"UniqueID")
+```
+
+
+# RC and LP spikes
+We add two types of spikes:
+
+1. RC spikes were added to the plasma lysate (during RNA isolation) and are thus indicative of RNA extraction efficiency. The number of reads going to RC spikes is inversely correlated with the amount of endogenous RNA. 
+1. LP spikes were added to the RNA eluate (after RNA isolation) and are thus indicative of RNA yield (if corrected for the elution volume, but in this experiment the elution volume is identical accross all samples). Similarly, more LP spikes indicates less endogenous RNA in eluate. 
+ 
+  
+## Spike percentage to all mapped reads
+
+Around 0-5% of all reads are going to spike counts. Like in RNA Exome study (exRNAQC005), the number of reads going to spikes is a marker for RNA content in either eluate or plasma (assuming isolation or prep efficiency is similar in all samples, likely to be the case as the same methods were used).
+
+```{r warning=FALSE, error=FALSE}
+spikesum<-gather(spikes, key="UniqueID",value="counts",-"spikeID") %>% 
+  mutate(spiketype=sub("-.*","",spikeID)) %>% group_by(UniqueID,spiketype) %>%
+  dplyr::summarise(spikesum=sum(counts,na.rm = TRUE))
+
+perc_spikes<-full_join(reads_complete %>% filter(reads=="all_mapped"), spikesum,by="UniqueID") %>% 
+  dplyr::select(-reads)
+
+perc_spikes<-perc_spikes %>% dplyr::mutate(perc=spikesum/counts*100)
+#write_tsv(perc_spikes,"percentage_spikes.txt")
+perc_spikes<-left_join(perc_spikes,sample_annotation, by="UniqueID") 
+
+p1 <- ggplot(perc_spikes, aes(x=GraphTube,y=perc,col=Tube, text= UniqueID)) +
+  geom_point() +
+  theme_point +
+    facet_wrap(~TubeType, scales = "free_x", ncol = 3)+
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_y_continuous(limits=c(NA,20),labels=full_nr) +
+  scale_color_manual(values=color_panel2) +
+  labs(x="",y="% of all going to spikes", title = "percentage of all reads going to RC or LP spikes", col = NULL)
+
+ggplotly(p1)
+ggsave("./plots/PrctGoingToSpikes.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+
+```{r warning=FALSE, error=FALSE}
+## Uniformity of spikes
+spikes_annotated<-left_join(melt(spikes) %>% dplyr::rename(UniqueID=variable),sample_annotation)
+spikes_annotated[is.na(spikes_annotated)] <- 0
+spikeconc<-read_tsv("../../Resources/spike_conc.txt")
+```
+
+
+```{r, fig.width=10, fig.height=7, warning=FALSE, error=FALSE}
+## Abundance compared to miRNAs
+all_miRs_spikes<-bind_rows(miRNAs %>%dplyr::rename(spmiRID=MIMATID),spikes %>% dplyr::rename(spmiRID=spikeID))
+all_miRs_spikes_melt<-gather(all_miRs_spikes, key="UniqueID",value="counts",-"spmiRID") %>%
+  mutate(type=sub("-.*","",sub("[0-9]*$","",spmiRID))) %>% dplyr::group_by(UniqueID) %>% 
+  mutate(ordermir=row_number(counts)) %>% # dplyr::row_number ranks the values (ascending order) with ties.method = "first"
+  left_join(sample_annotation, by="UniqueID")
+```
+
+## Endogenous small RNA vs spike reads
+### Endogenous vs RC spikes
+The volume of RC spikes added is proportional to plasma input volume (1 µL RC / 100 µL plasma)
+
+  - If the RNA-isolation does not selectively favor RC or endogenous RNA, the ratio endogenous RNA vs RC should be constant throughout experiment.
+  - In absence of length bias, differences in endogenous RNA/RC spike ratio are related to experimental error (not exact input volume) or bias towards RNA sequence content.
+
+```{r RC}
+#sum all counts for endogenous RNA (miRNA + contam), LP and RC respectively
+####??? should we use mapped here instead of miRNA + contam?
+# gene_level_ratios <- rbind(miRNAs %>% dplyr::rename(ensembl_id=MIMATID), 
+#                            contam %>% dplyr::select(-c("contam"))) %>% 
+#   mutate(type="endogenous") %>% group_by(type) %>% 
+#   dplyr::summarise_if(is.numeric, sum, na.rm=TRUE) %>% 
+#   rbind(., spikes %>% mutate(type=gsub(".-..$","",spikeID)) %>%
+#           group_by(type) %>% dplyr::summarise_if(is.numeric, sum, na.rm=TRUE)) %>%
+gene_level_ratios <- rbind(reads %>% filter(reads=="mapped_miR") %>% 
+                             mutate(type="endogenous") %>% group_by(type) %>%
+                             dplyr::summarise_if(is.numeric, sum, na.rm=TRUE),
+                           spikes %>% mutate(type=gsub(".-..$","",spikeID)) %>%
+                             group_by(type) %>% 
+                             dplyr::summarise_if(is.numeric, sum, na.rm=TRUE)) %>%
+  gather(., key="UniqueID",value="counts",-type) %>%  #long format
+  spread(., key = "type", value="counts") %>%
+  mutate("LPvsEndo"=LP/endogenous, 
+         "RCvsEndo"=RC/endogenous,
+         "EndovsRC"=endogenous/RC,
+         "EndovsLP"= endogenous/LP) %>%
+  left_join(., sample_annotation %>% dplyr::select(c("UniqueID","Tube","SampleID","GraphTube","EluateV","PlasmaInputV", "BiologicalReplicate", "TimeLapse")), by="UniqueID")  #add annotation
+
+spikes1 <- ggplot(gene_level_ratios, aes(x=GraphTube, y=EndovsRC, fill=Tube, colour=Tube)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  labs(x="", y="Endogenous/RC") +
+  scale_fill_manual(values=color_panel) +
+  scale_colour_manual(values=color_panel) +
+  theme_bar +
+  labs(x="", y="endogenous/RC", title=NULL, col = NULL, fill = NULL)
+#calculate statistics for Sequin/endogenous (sd, sem, 95% ci)
+test <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsRC", groupvar=c("GraphTube"))
+# Plot LP/endo in log10 scale
+spikes2 <- ggplot(test, aes(x=GraphTube, y=10^measurevar_log_resc)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=Tube), size=1.2) +
+  geom_point(data=test, aes(x=GraphTube, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="relative small RNA conc. (rescaled)", title=NULL, col = NULL, fill = NULL) +
+  scale_colour_manual(values=color_panel) +
+  scale_y_log10() +
+  theme_bar 
+ggplotly(spikes1)
+ggsave("./plots/endoVsRC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+ggplotly(spikes2)
+ggsave("./plots/endoVsRC_CI.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+p1 <- ggplot(test,aes(x=TimeLapse,y=10^measurevar_log_resc, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + 
+  scale_y_log10() +
+  labs(x="", y="relative endogenous/RC", title="Relative small RNA conc. in plasma based on RC counts (rescaled to lowest)", col =  NULL, x = NULL)
+
+ggplotly(p1)
+ggsave("./plots/endoVsRC_lineplot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+RNAconc_lineplot <- ggplot2::last_plot()
+```
+
+#### Fold changes for small RNA concentration in plasma
+In this metric, we can observe that the RNA concentration in the plasma is much more variable in the preservation tubes (except for the Roche tube), while the fold changes in the non-preservation tubes are very close to the expected value of 1.
+
+```{r}
+FC <- generateFC(input_df = test, variable = "EndovsRC", dfName = "small RNA concentration based on RC spikes")
+
+names(FC)[names(FC) == 'foldchange'] <- 'EndovsRC_FC'
+
+FC_all <- merge(FC %>% select(-inputType), FC_all, on = c("Tube", "BiologicalReplicate", "ReplID", "Replicates"))
+
+
+ggsave("./plots/RNAconc_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+RNAconc_FC_plot <- ggplot2::last_plot()
+```
+
+
+### Small RNA concentration in eluate (LP dependent)
+The ratio of endogenous RNA to LP reflects the concentration of endogenous RNA in the eluate. More endogenous RNA in eluate after RNA isolation results in proporionally fewer reads going to LP spikes, and thus a higher ratio of endogenous/LP.
+
+```{r CONCENTRATION}
+# miRNAs <- kallisto %>% filter(!str_detect(ensembl_transcript_id,"LP|R1|R2")) %>% group_by(MIMATID) %>% summarise_if(is.numeric, sum, na.rm=TRUE) 
+
+spikes1 <- ggplot(gene_level_ratios, aes(x=GraphTube, y=LPvsEndo, colour=Tube)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  scale_fill_manual(values=color_panel) +
+  scale_colour_manual(values=color_panel) +
+  theme_bar +
+  labs(x="", y="LP/endogenous", title="inverse of RNA concentration", subtitle="LP vs Endogenous RNA", colour = NULL, fill = NULL)
+
+spikes2 <- ggplot(gene_level_ratios, aes(x=GraphTube, y=EndovsLP, colour=Tube)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  scale_fill_manual(values=color_panel) +
+  scale_colour_manual(values=color_panel) +
+  theme_bar +
+  labs(x="", y="endogenous/LP", title=NULL, subtitle=NULL, colour = NULL, fill = NULL)
+
+ggplotly(spikes2)
+ggsave("./plots/endoVsLP.pdf", plot = ggplot2::last_plot(), dpi = 300)
+#grid.arrange(spikes1,spikes2)
+
+```
+
+```{r CONCENTRATION_part2}
+test <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsLP", groupvar=c("GraphTube"))
+# Plot LP/endo in log10 scale
+spikes_conc <- ggplot(test, aes(x=GraphTube, y=10^measurevar_log_resc)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=Tube), size=1.2) +
+  geom_point(data=test, aes(x=GraphTube, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="relative endogenous small RNA concentration", title=NULL, subtitle="endogenous small RNA vs LP (rescaled)", col = NULL) +
+  scale_colour_manual(values=color_panel) +
+  scale_y_log10() +
+  theme_bar 
+
+ggplotly(spikes_conc)
+
+ggsave("./plots/endoVsLP_CI.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+tmp_summary <- gene_level_ratios %>% group_by(GraphTube) %>% dplyr::summarize(mean_EndovsLP= mean(EndovsLP), sd_EndovsLP=sd(EndovsLP)) %>% mutate(CV_EndovsLP = sd_EndovsLP/mean_EndovsLP*100) %>% left_join(unique(dplyr::select(sample_annotation, c("Tube","GraphTube"))), by="GraphTube")
+
+p1 <- ggplot(test,aes(x=GraphTube,y=10^measurevar_log_resc, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + 
+  scale_y_log10() +
+  labs(x="", y="relative endogenous small RNA concentration", title="Relative small RNA conc. based on LP spikes", subtitle="endogenous RNA vs LP (rescaled to lowest)", col = "", x = NULL)
+
+
+ggplotly(p1)
+ggsave("./plots/endoVsLP_lineplot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+
+```
+
+
+### RC vs LP spikes
+As we add an identical amount of RC and LP spikes to the samples, we would expect that the RC counts and LP counts are well correlated, if there are no issues in RNA extraction or library preparation. We can indeed see an overall good spearman correlation of 0.85. However, when inspecting the individual line plots, we can i.e. see that DNA Streck has a very low RC/LP ratio, indicating problems with RNA extraction in this tube. 
+
+```{r, fig.align="center"}
+collapse_unique <- function(x) {
+    paste(unique(x), collapse = ",")
+}
+perc_spikes<- spread(perc_spikes, spiketype, spikesum)
+perc_spikes<- dplyr::select(perc_spikes, -c("perc"))
+perc_spikes <- aggregate(perc_spikes[,-1], list(perc_spikes[,1]), FUN = collapse_unique)
+perc_spikes$LP1 <- as.numeric(gsub('\\D+','', perc_spikes$LP1))
+perc_spikes$RC1 <- as.numeric(gsub('\\D+','', perc_spikes$RC1))
+perc_spikes$RC2 <- as.numeric(gsub('\\D+','', perc_spikes$RC2))
+perc_spikes$RC <- perc_spikes$RC1 + perc_spikes$RC2
+colnames(perc_spikes)[1] <- "UniqueID"
+
+ggplot(gene_level_ratios, aes(x = EndovsLP, y = EndovsRC, col = Tube)) + geom_point() + theme_point + scale_y_continuous(trans = "log2") + scale_x_continuous(trans = "log2") + labs(title = "Correlation of ") + theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(x = "endo/LP", y = "endo/RC", title = "correlation of RNA concentration in plasma (RC) and eluate (LP)", col = NULL, fill = NULL) +
+  geom_smooth(method = "lm", se = TRUE, aes(col = FALSE))+
+  theme_point + geom_abline(intercept=0, slope=1, color = "gray", linetype = "dashed")+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_color_manual(values=color_panel) +
+  stat_cor(method = "spearman", aes(col = FALSE, label=paste(..r.label.., cut(..p..,breaks = c(-Inf, 0.0001, 0.001, 0.01, 0.05, Inf), labels = c("'****'", "'***'", "'**'", "'*'", "'ns'")), sep = "~")))
+ggsave("./plots/RCvsLP_corrplot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+p1 <- ggplot(perc_spikes,aes(x=GraphTube,y=RC/LP1, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))+
+  labs(x="", y = "RC/LP", title="RC/LP",subtitle="", col = "")
+ggplotly(p1)
+ggsave("./plots/RCtoLP_lineplot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+
+# Number of miRNAs
+## Cut-off {.tabset}
+The cut-off from exRNAQC011 (kit study), based on technical replicates, was used (here 3 counts). We showed that the cut-off that we proposed stays stable, even if reads are subsampled to 800k.
+
+```{r}
+#cutoff_kit <- data.frame(MIR0.2 = 6, CCF1 = 6, CCF4=6, CIRC0.25 = 13.01, CIRC5 = 5.96, MAX0.1 = 10.87, MIRA0.2 = 9, MIRA0.6 = 6.73, MIRV0.1 = 14.01, MIRV0.625 = 9.01, NUC0.3 = 10.1, NUC0.9 = 7.62)
+#cutoff_kit <- gather(cutoff_kit, key = GraphTube, value = median_th)
+cutoff_kit <- data.frame(Tube = sample_annotation$Tube, GraphTube = sample_annotation$GraphTube, median_th = 3)
+```
+
+
+```{r apply cut-off}
+#ensembl <- useEnsembl(biomart="ensembl",dataset="hsapiens_gene_ensembl", version = 91)
+#genes_ens <- getBM(attributes=c('MIMATID','gene_biotype'),mart=ensembl)
+#genes_ens <- data.table::fread(paste0(data_path,"gene_biotypes_ensemblv91.txt"), header=T, data.table = F)
+miRNAs_long <-  miRNAs %>% gather(., key="UniqueID", value="est_counts", -MIMATID) %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,GraphTube,SampleID, Tube, BiologicalReplicate)), by="UniqueID")
+#keep only protein coding genes with more than 0 counts
+
+miRNAs_long <-  miRNAs_long %>% filter(est_counts > 0)
+
+number_miR_detected <-  miRNAs_long %>% group_by(SampleID) %>% dplyr::summarize(miR_above0=n()) 
+
+number_miR_detected <- full_join(number_miR_detected, 
+                                    miRNAs_long %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_above0=sum(est_counts)), 
+                                   by="SampleID")
+#cutoff_kit <- single_pos %>% group_by(GraphTube) %>% dplyr::summarise(median_th = median(filter_threshold))
+ miRNAs_cutoff <-  miRNAs %>% gather(., key="UniqueID", value="est_counts", -MIMATID) %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,GraphTube,SampleID, Tube, BiologicalReplicate, TimeLapse)), by="UniqueID") 
+ 
+  #left_join(., cutoff_kit, by="GraphTube") #add the median cut-off for each kit
+ miRNAs_cutoff <-  miRNAs_cutoff %>% 
+  filter(est_counts > 6)
+ 
+number_miR_detected <- full_join(number_miR_detected, 
+                                    miRNAs_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(miR_aboveTh=n()),
+                                   by="SampleID")
+number_miR_detected <- full_join(number_miR_detected, 
+                                    miRNAs_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_aboveTh=sum(est_counts)), 
+                                   by="SampleID")
+number_miR_detected <- left_join(number_miR_detected, 
+                                   dplyr::select(sample_annotation, c(UniqueID,GraphTube, RNAisolation, EluateV,SampleID, Tube, BiologicalReplicate, TimeLapse)),
+                                   by="SampleID")
+#convert to the original format
+ miRNAs_cutoff <- dplyr::select(miRNAs_cutoff, MIMATID, UniqueID, est_counts, Tube, BiologicalReplicate, TimeLapse) %>% 
+  spread(., key=UniqueID, value=est_counts)
+#write.csv( miRNAs_cutoff, file="../../../exRNAQC/ miRNAs_cutoff.csv",row.names=FALSE, na="")
+```
+
+
+
+```{r plots_miR-depth_unfiltered, echo=FALSE}
+
+######keep only plots!
+p1 <- ggplot(number_miR_detected,aes(x=GraphTube,y=miR_above0, col=Tube))+
+  geom_point() +
+  theme_point+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  labs(x="", y="# miRNAs",title="absolute number of miRNAs (unfiltered)", col = NULL) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel2) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+  #facet_wrap(~GraphTube, nrow = 1)
+
+#calculate statistics for LP/endogenous (sd, sem, 95% ci)
+test <- log_rescaling_CI(number_miR_detected, measurevar="miR_above0", groupvar="GraphTube",conf=0.95, log_base=10)
+
+#test
+#print(test %>% group_by(GraphTube) %>% filter(row_number() == 1), n=Inf, width=Inf)
+
+
+p2 <- ggplot(test, aes(x=GraphTube, y=mean_oriscale, colour=Tube)) + 
+  geom_point() +  
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), width=.1) +
+  geom_line() +
+  labs(x="", y="relative # miRNAs",title="relative number of miRNAs (unfiltered)", col = NULL) +
+  scale_colour_manual(values=color_panel2) +
+  scale_y_continuous(limits=c(0,NA)) +
+  theme_point +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+
+#grid.arrange(p1,p2)
+
+```
+
+```{r plots_miR-depth_filtered, echo=FALSE, fig.height=5, fig.width=10}
+
+p3 <- ggplot(number_miR_detected,aes(x=GraphTube,y=miR_aboveTh, col=Tube))+
+  geom_point() +
+  theme_point+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  labs(x="", y="# miRNAs",title="absolute number of miRNAs (filtered)", col = NULL) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel2) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+  #facet_wrap(~GraphTube, nrow = 1)
+
+#source("/Users/almorlio/Dropbox (Vandesompele lab)/Personal/exRNAQC/HelperFunctions.R")
+#calculate statistics for LP/endogenous (sd, sem, 95% ci)
+test <- log_rescaling_CI(number_miR_detected, measurevar="miR_aboveTh", groupvar="GraphTube",conf=0.95, log_base=10)
+
+#print(test %>% group_by(GraphTube) %>% filter(row_number() == 1), n=Inf, width=Inf)
+
+
+p4 <- ggplot(test, aes(x=GraphTube, y=mean_oriscale, colour=Tube)) + 
+  geom_point() +  
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), width=.1) +
+  geom_line() +
+  labs(x="", y="relative # miRNAs",title="relative number of miRNAs (filtered)", col = NULL) +
+  scale_colour_manual(values=color_panel2) +
+  scale_y_continuous(limits=c(0,NA)) +
+  theme_point +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+
+```
+
+After filtering, there is a substantial drop in number of miRNAs. Note that we also subsampled to 800k reads, so the number of miRNAs detected is severely skewed due to this subsampling. After filtering, the number of miRNAs is relatively stable across all tubes, despite the mapping issue described above. 
+
+```{r echo=FALSE}
+ggplotly(p1 + scale_y_continuous(limits=c(0,500)))
+ggsave("./plots/number_of_miRNA_unfilt.pdf", plot = ggplot2::last_plot(), dpi = 300)
+ggplotly(p3 + scale_y_continuous(limits=c(0,500)))
+ggsave("./plots/number_of_miRNA_filt.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+
+```{r}
+p1 <- ggplot(number_miR_detected,aes(x=TimeLapse,y=miR_aboveTh, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))+
+  labs(x="", title="absolute number of miRNAs (filtered)",subtitle="", col = "", y = "number of miRNAs above threshold", x = NULL)
+ggplotly(p1)
+
+ggsave("./plots/number_of_miRNA_filt_lineplot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+miRNACount_lineplot <- ggplot2::last_plot()
+```
+
+## Fold changes of number of miRNAs
+In this metric, we observe that the number of miRNAs remains relatively stable in most tubes, except for DNA Streck (fold changes are close to 1).
+
+```{r}
+FC <- generateFC(input_df = number_miR_detected, variable = "miR_aboveTh", dfName = "number of miRNA after filtering")
+
+names(FC)[names(FC) == 'foldchange'] <- 'miRNAcount_FC'
+
+FC_all <- merge(FC %>% select(-inputType), FC_all, on = c("Tube", "BiologicalReplicate", "ReplID", "Replicates"))
+
+ggsave("./plots/number_of_miRNA_unfilt_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+miRNACount_FC_plot <- ggplot2::last_plot()
+```
+
+# Number of contaminants {.tabset}
+Contaminants in miRNA data are reads going to other biotypes than miRNA, such as:
+
+- misc. RNA (e.g. Y-RNA, abundant in platelets)
+- small RNA sequences mapping to multiple biotypes ("multiple")
+- tRNA
+- snoRNA
+- snRNA
+- piRNA
+- rRNA
+
+These are often unwanted and take up expensive sequencing reads. The more contaminants, the deeper you have to sequence to obtain sufficient reads for miRNAs. 
+
+## Unfiltered
+```{r, fig.height= 8, fig.width=8, echo = F}
+test_div <- contam %>% gather(key="UniqueID",value="counts",-c("contam","ensembl_id")) %>% 
+  filter(counts>=1) %>% dplyr::group_by(UniqueID,contam) %>%
+  dplyr::summarise(diversity=n()) %>%
+  left_join(sample_annotation)
+ggplot(test_div, aes(x=GraphTube, y=diversity, color=GraphTube)) +
+  geom_point(size=0.7) +
+  facet_wrap(~contam,nrow=4) +
+  theme_bar +
+  labs(x = NULL, y = "count") + 
+  theme(legend.position="none")# +
+ # scale_color_manual(values = color_panel1)
+```
+
+## Filtered
+```{r, fig.height= 8, fig.width=8, echo =F}
+test_div <- contam %>% gather(key="UniqueID",value="counts",-c("contam","ensembl_id")) %>% 
+  filter(counts>3) %>% dplyr::group_by(UniqueID,contam) %>%
+  dplyr::summarise(diversity=n()) %>%
+  left_join(sample_annotation)
+ggplot(test_div, aes(x=GraphTube, y=diversity, color=GraphTube)) +
+  geom_point(size=0.7) +
+  facet_wrap(~contam,nrow=4) +
+  theme_bar +
+    labs(x = NULL, y = "count") + 
+  theme(legend.position="none")# +
+  #scale_color_manual(values = color_panel1)
+
+```
+
+
+# Biotype distribution
+For every sample, we plot the percentage of counts and genes for each biotype. We are usually interested in miRNAs, and the other biotypes are often seen as contaminants (see above).
+
+## All {.tabset}
+### Excluding spikes
+
+```{r, fig.width=8, fig.height=7, warning=F}
+
+color_panel3 <- color_panel
+color_panel3[length(color_panel3)] <- "darkcyan"
+color_panel3[length(color_panel3)+1] <- "darkgray"
+
+#miR
+tmp1 <- miRNAs %>% gather(key="UniqueID",value="counts", -"MIMATID") %>%
+  mutate(type="miRNA") %>%
+  dplyr::group_by(UniqueID,type) %>% 
+  dplyr::summarise(sum_counts = sum(counts, na.rm=T)) #calculate sum of MIMAT per sample
+  
+#contaminants
+tmp2 <- gather(contam, key="UniqueID",value="counts",-c("contam","ensembl_id")) %>%
+  dplyr::select(c("UniqueID","type"="contam","counts")) %>%
+  mutate(type = gsub("multiple_misc_RNA_snRNA","multiple_snRNA_misc_RNA",type)) %>%
+  dplyr::group_by(UniqueID, type) %>%
+  dplyr::summarise(sum_counts=sum(counts,na.rm=T))
+
+#join them together and calculate %
+tmp <- rbind(tmp1,tmp2) 
+
+#notann
+tmp3 <- tmp %>% ungroup() %>% dplyr::group_by(UniqueID) %>% 
+  dplyr::summarise(sum_all = sum(sum_counts, na.rm=T)) %>% 
+  full_join(gather(reads %>% filter(reads=="mapped"), key="UniqueID", value="mapped", -"reads") %>% dplyr::select(-reads), by="UniqueID") %>% 
+  mutate(type="not_annotated",not_ann = mapped-sum_all) %>%
+  dplyr::select(c("UniqueID","type","sum_counts"="not_ann")) %>% group_by(UniqueID)
+
+perc_all <- rbind(tmp,tmp3) %>%
+  full_join(reads_complete %>% filter(reads=="mapped") %>% 
+              dplyr::select(-reads), by="UniqueID") %>% 
+  ungroup() %>% dplyr::group_by(UniqueID,type) %>%
+  mutate(perc=sum_counts/counts*100) %>%
+  left_join(sample_annotation, by="UniqueID")
+
+perc_all$type[grep("multiple",perc_all$type)]<-"multiple"
+
+p1 <- ggplot(perc_all %>% filter(TubeType == "preservation"),aes(x=SampleID,y=perc,fill=type))+
+  geom_bar(stat="identity",position = "fill")+
+  theme_bar+
+  facet_wrap(~Tube, nrow=1, scales="free_x") +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),axis.line.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_manual(values=c("black", color_panel3)) +
+  labs(title="all biotypes (preservation tubes)", y = "fraction", x = NULL, fill = NULL)
+ggplotly(p1)
+ggsave("./plots/biotypes_preservation_nospikes.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+p1 <- ggplot(perc_all %>% filter(TubeType == "non-preservation"),aes(x=SampleID,y=perc,fill=type))+
+  geom_bar(stat="identity",position = "fill")+
+  theme_bar+
+  facet_wrap(~Tube, nrow=1, scales="free_x") +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),axis.line.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_manual(values=c("black", color_panel3)) +
+  labs(title="all biotypes (non-preservation tubes)", y = "fraction", x = NULL, fill = NULL)
+ggplotly(p1)
+ggsave("./plots/biotypes_nonpreservation_nospikes.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+rm(tmp1,tmp2,tmp3,tmp)
+```
+
+### Including spikes
+The previous bar charts are biotypes without spike reads. The next figures shows that spike reads only make up a small percentage of total mapped reads. 
+
+```{r, fig.width=8, fig.height=7, warning=F}
+tmp1 <- miRNAs %>% gather(key="UniqueID",value="counts", -"MIMATID") %>%
+  mutate(type="miRNA") %>%
+  dplyr::group_by(UniqueID,type) %>% 
+  dplyr::summarise(sum_counts = sum(counts, na.rm=T)) #calculate sum of MIMAT per sample
+  
+#contaminants
+tmp2 <- gather(contam, key="UniqueID",value="counts",-c("contam","ensembl_id")) %>%
+  dplyr::select(c("UniqueID","type"="contam","counts")) %>%
+  dplyr::group_by(UniqueID, type) %>%
+  dplyr::summarise(sum_counts=sum(counts,na.rm=T))
+
+#join them together 
+tmp <- rbind(tmp1,tmp2) 
+
+#notann
+tmp3 <- tmp %>% ungroup() %>% dplyr::group_by(UniqueID) %>% 
+  dplyr::summarise(sum_all = sum(sum_counts, na.rm=T)) %>% 
+  full_join(gather(reads %>% filter(reads=="mapped"), key="UniqueID", value="mapped", -"reads") %>% dplyr::select(-reads), by="UniqueID") %>% 
+  mutate(type="not_annotated",not_ann = mapped-sum_all) %>%
+  dplyr::select(c("UniqueID","type","sum_counts"="not_ann")) %>% group_by(UniqueID)
+
+tmp4 <- spikes %>% gather(key="UniqueID",value="counts",-"spikeID") %>%
+  ungroup() %>% dplyr::group_by(UniqueID) %>% 
+  dplyr::summarise(sum_counts = sum(counts, na.rm=T)) %>% 
+  mutate(type="spikes") %>%
+  group_by(UniqueID)
+
+tmpb <- rbind(tmp3,tmp4)
+
+perc_all <- rbind(tmp,tmpb) %>%
+  full_join(reads_complete %>% filter(reads=="all_mapped") %>% 
+              dplyr::select(-reads), by="UniqueID") %>% 
+  ungroup() %>% dplyr::group_by(UniqueID,type) %>%
+  mutate(perc=sum_counts/counts*100) %>%
+  left_join(sample_annotation, by="UniqueID")
+
+perc_all$type[grep("multiple",perc_all$type)]<-"multiple"
+
+
+
+p1 <- ggplot(perc_all %>% filter(TubeType == "preservation"),aes(x=SampleID,y=perc,fill=type))+
+  geom_bar(stat="identity",position = "fill")+
+  theme_bar+
+  facet_wrap(~Tube, nrow=1, scales="free_x") +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),axis.line.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_manual(values=c("black", color_panel3)) +
+  labs(title="all biotypes (preservation tubes)", y = "fraction", x = NULL, fill = NULL)
+ggplotly(p1)
+ggsave("./plots/biotypes_preservation_plusSpikes.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+
+p1 <- ggplot(perc_all %>% filter(TubeType == "non-preservation"),aes(x=SampleID,y=perc,fill=type))+
+  geom_bar(stat="identity",position = "fill")+
+  theme_bar+
+  facet_wrap(~Tube, nrow=1, scales="free_x") +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),axis.line.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_manual(values=c("black", color_panel3)) +
+  labs(title="all biotypes (non-preservation tubes)", y = "fraction", x = NULL, fill = NULL)
+ggplotly(p1)
+ggsave("./plots/biotypes_nonpreservation_plusSpikes.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+
+
+rm(tmp1,tmp2,tmp3,tmp)
+```
+
+## Evolution of miRNAs fraction
+
+```{r}
+perc_miRs <- miRNAs %>% gather(key="UniqueID",value="counts", -"MIMATID") %>% mutate(type=gsub("[0-9].*$","",MIMATID)) %>%
+  dplyr::group_by(UniqueID,type) %>% 
+  dplyr::summarise(sum_counts = sum(counts, na.rm=T)) %>% #calculate sum of MIMAT per sample
+  full_join(reads_complete %>% filter(reads=="all_mapped")) %>% 
+  mutate(perc=sum_counts/counts*100) %>% #calculate perc of miRs and spikes of total mapped reads
+  left_join(sample_annotation, by="UniqueID")
+
+
+p1 <- ggplot(perc_all %>% filter(type == "miRNA"),aes(x=TimeLapse,y=perc, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))+
+  labs( y="miRNA counts (%)", title="percentage of miRNA counts", x = NULL, col = NULL)
+
+ggplotly(p1)
+
+ggsave("./plots/prct_miRNAs_nospikes.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+biotype_lineplot <- ggplot2::last_plot()
+
+```
+
+### Fold changes of biotypes
+If no changes occur in the tube over time, the fraction of the reads going to miRNAs should remain relatively stable. However, we can see in this metric that the preservation tubes perform worse than the non-preservation tubes (except for Biomatrica).
+
+```{r}
+
+FC <- generateFC(input_df = perc_all %>% filter(type == "miRNA"), variable = "perc", dfName = "miRNA fraction (raw counts)")
+ggsave("./plots/biotypes_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+names(FC)[names(FC) == 'foldchange'] <- 'miRNAfract_FC'
+FC_all <- merge(FC %>% select(-inputType), FC_all, on = c("Tube", "BiologicalReplicate", "ReplID", "Replicates"))
+biotype_FC_plot <- ggplot2::last_plot()
+```
+
+
+# Area left of the curve (ALC)
+- The ALC (area-left-of-curve) calculation is done according to see Mestdagh et al., Nature Methods, 2014, and represents a precision metric:
+  1. Only genes that reach threshold (95% single positive (SP) elimination based on exRNAQC004) are taken into account.
+  2. All zero counts are replaced by NA
+  3. The log2 ratios of counts for each gene are determined, each time between 2 timepoints
+  4. Then, the absolute value of these log2 ratios are taken and ranked. This is plotted for every condition
+
+- The faster the curve reaches 100% -> the smaller the ALC -> the better the precision (indicates that the replicates give similar counts for each gene)
+
+The ALC values are summarized based on the average of the ALC values (after removing NAs). The dot plot at the end gives an overview of all these values.
+
+**Score: lower ALC = better**
+
+## ALC - At least 1 replicate > threshold (and other > 0)
+
+```{r, fig.height=2, fig.width=2, message=FALSE, warning=FALSE, echo=FALSE, fig.show="hold"}
+double_positives<-miRNAs %>% dplyr::select(starts_with("RNA"),MIMATID) %>%
+  replace(., is.na(.),0) %>% #first change NAs to 0
+  mutate_if(is.numeric, funs(round)) #round everything to nearest integer
+ 
+double_positives<-double_positives[rowSums(double_positives %>% select_if(is.numeric) > 1, na.rm=T)>0,] # keep only the rows where at least one sample has more than 1
+ALC_input_all <- data.frame() 
+for (duplicate_type in unique(sample_annotation$Tube)){
+  sample_duplicates<-sample_annotation%>% filter(Tube==duplicate_type) %>%
+    dplyr::select(UniqueID,GraphTube,TimeLapse,Tube, BiologicalReplicate)
+  cutoff95SP <- cutoff_kit[cutoff_kit$Tube==duplicate_type,]$median_th
+  if(nrow(sample_duplicates)>1){
+    #print(duplicate_type)
+    double_positives_sample<-double_positives %>% dplyr::select(MIMATID,sample_duplicates$UniqueID) # only keep the replicates of one type
+   
+    samples_comb <- combn(sample_duplicates$UniqueID,2) #compare 2 of the 3 samples at a time
+    for (n_col in 1:ncol(samples_comb)) {
+      #print(samples_comb[,n_col])
+      nr_runA <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$TimeLapse)
+      nr_runB <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$TimeLapse)
+      RepA <- sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$BiologicalReplicate
+      RepB <- sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$BiologicalReplicate
+     if ((RepA == RepB)){
+      varname <- paste0("T",nr_runA,"_",nr_runB) #make a name so you can backtrace which replicates are compared
+      #print(varname)
+      double_positives_2repl <- double_positives %>% dplyr::select(MIMATID, paste(samples_comb[1,n_col]), paste0(samples_comb[2,n_col])) %>%
+        filter_if(is.numeric, all_vars(.>0)) %>% #keep only the 2 replicates of one kit and keep only genes where both replicates have > 0 counts
+        filter_if(is.numeric, any_vars(.>cutoff95SP)) # remove genes where neither of the replicates reach the threshold that removes 95% of SP in that kit
+      correlation_samples<-double_positives_2repl %>%
+        mutate(log2_ratio=abs(log(get(samples_comb[1,n_col]),2)-log(get(samples_comb[2,n_col]),2))) %>%
+        dplyr::select(log2_ratio,MIMATID) #%>% drop_na()
+      ALC_input<-correlation_samples %>% arrange(log2_ratio) %>% # order by log2 ratio and then make a rank (counter) and rescale this to 1 (perc_counter)
+        #mutate(rank=percent_rank(log2_ratio)) %>% # this does not work: gives everything with log2ratio = 0 rank 0
+        mutate(counter = seq(1:nrow(double_positives_2repl)), Tube=duplicate_type, Replicates=varname, BiologicalReplicate = paste0(RepA,"-",RepB)) %>%
+        mutate(ReplID = paste0(Tube,"-",Replicates), perc_counter = counter/nrow(double_positives_2repl))
+     
+      ALC_input_all <- rbind(ALC_input_all, ALC_input)
+      }
+    }
+  }
+}
+max_ALC <-max(ALC_input_all$log2_ratio) # calculate the max ALC over everything (necessary for area calculation -> should always be the same in order to compare among kits)
+ALC <- ALC_input_all %>% dplyr::group_by(Tube,Replicates,BiologicalReplicate) %>%
+  dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC*length(MIMATID))) %>%
+  #dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC)) %>%
+  mutate(ReplID = paste0(Tube,"-",Replicates))
+ 
+for (replicates in unique(ALC_input_all$ReplID)) { 
+  for (techrep in c("TUBE1-TUBE1", "TUBE2-TUBE2", "TUBE3-TUBE3")){
+   #replicates = "ACD-A-Rep0_16"    
+   #techrep = "TUBE1-TUBE1" # plot the ALC (= the colored part of the plot)
+    tmp <- ALC_input_all %>% dplyr::filter(ReplID==replicates)  %>%
+                 dplyr::filter(BiologicalReplicate == techrep)
+    if (nrow(tmp) != 0){ 
+  print(ggplot( tmp %>%
+          mutate(log2_ratio_resc = log2_ratio/max_ALC))+
+        geom_line(aes(x=log2_ratio_resc,y=perc_counter))+
+        #facet_wrap(~ReplID) +
+        geom_ribbon(aes(x=log2_ratio_resc,ymin=perc_counter,ymax=1), fill="lightblue")+
+        geom_hline(aes(yintercept = 1))+
+        theme_classic()+
+        scale_x_continuous(limits=c(0,1)) +
+        scale_y_continuous(expand = c(0, 0)) +
+        theme(legend.position = "none") +
+        labs(title=paste0(replicates, " - ", techrep),
+             subtitle=paste("ALC:", round(ALC %>% ungroup() %>% dplyr::filter(ReplID==replicates)  %>%
+                 dplyr::filter(BiologicalReplicate == techrep) %>% select(ALC_calc),2)), #print ALC for this particular comparison!
+             y="rank percentile",x="rescaled log2 ratio"))
+    }
+  }
+}
+#ALC<-sum(ALC_input$log2_ratio)/(length(ALC_input$log2_ratio))
+ 
+```
+
+```{r, fig.align="center"}
+#print(all_plot + labs(title="Pairwise ALCs"))
+ALC_melt <- left_join(ALC, sample_annotation[,c("Tube")], by="Tube")
+ALC$BiologicalReplicate <- gsub("[-]TUBE[0-9]*","", ALC$BiologicalReplicate)
+ALC$Replicates <- gsub("^Rep04_0$","T0-T04", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_04$","T0-T04", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep16_0$","T0-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_16$","T0-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep16_04$","T04-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep04_16$","T04-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep24_0$","T0-T24", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_24$","T0-T24", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep72_0$","T0-T72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_72$","T0-T72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep72_24$","T24-T72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep24_72$","T24-T72", ALC$Replicates)
+#ALC_melt <- ALC_melt %>% filter(Replicates %in% c("Rep0_04", "Rep04_16", "Rep0_16", "Rep0_24", "Rep24_72", "Rep0_72"))
+
+ALC$TimePoint <- ifelse(ALC$Replicates %in% c("T24_0", "T0_24", "T0_04", "T04_0"), "1st timepoint", ifelse(ALC$Replicates%in% c("T72_0", "T0_72", "T0_16", "T16_0"), "2nd timepoint", NA))
+ALC$TubeType <- ifelse(ALC$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+
+
+ggplot(ALC %>% filter(!is.na(TimePoint)), aes(x=reorder(Tube,ALC_calc, FUN = function(x) -mean(x, na.rm = TRUE)), y = 2^ALC_calc)) +
+            geom_boxplot() + 
+            geom_beeswarm(groupOnX=TRUE, size = 2.5, aes(col = TimePoint, shape = TubeType)) + 
+            geom_hline(yintercept = 1, linetype = "dashed", color = "gray") + 
+            labs(subtitle = "ordered by mean", title = paste0("pairwise ALCs"), y = "linear ALC", x = NULL, col = "comparison", shape = "tube type") +
+        
+  scale_fill_manual(values=color_panel) + theme_point + theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1))+
+          stat_summary(
+          geom = "point",
+          fun.y = "mean",
+          col = "black",
+          size = 2,
+          shape = 24,
+          fill = "white"
+)
+
+ggsave("./plots/ALC_lineplot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+ALC_FC_plot <- ggplot2::last_plot()
+ALC_mean <- ALC %>% dplyr::group_by(Tube) %>% dplyr::summarise(ALC = mean(ALC_calc))
+```
+
+
+# Fold change summary of 5 performance metrics
+We can conclude, based on this data-analysis and these metrics, that the preservation tubes are too variable in terms of fold-changes to be of further use. They do not claim what they do: preservation of the content based on T0. The non-preservation tubes were not tested to T72, but these are also not marketed to do that. We chose 16 hours as latest realistic timepoint in a routine lab.
+
+For phase II of the exRNAQC study, we selected three tubes to proceed, i.e. EDTA, citrate and serum, based on their performance and availability in a routine hospital setting. 
+
+
+```{r}
+FC_all_means <- FC_all %>%  dplyr::group_by(Tube) %>% dplyr::summarise_all(funs(mean), na.rm = TRUE) %>% select(-c("BiologicalReplicate", "ReplID", "Replicates", "TimePoint", "TubeType"))
+ALC_mean$ALC <- 2^ALC_mean$ALC
+FC_all_means <- merge(ALC_mean, FC_all_means)
+FC_all_means <- FC_all_means %>% melt()
+FC_all_means$TubeType <- ifelse(FC_all_means$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+p <- ggplot(FC_all_means, aes(x = reorder(variable, value, FUN = function(x) -mean(x, na.rm = TRUE)), y = value, group = Tube, color = Tube))+geom_vline(xintercept = c(1,2,3,4,5), linetype = "dashed", color = "grey") + geom_line() + geom_point() + theme_point + facet_wrap(~TubeType) + labs(title = "summary of fold changes (small RNA)", y = "mean FC", x = NULL, col = NULL) + scale_color_manual(values=color_panel) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_x_discrete(labels=c("ALC_FC" = "ALC", "miRNAfract_FC" = "miRNA biotype", "hemolysis_FC" = "hemolysis",
+                              "miRNAcount_FC" = "miRNA count", "EndovsRC_FC" = "concRNA")) + scale_y_continuous(trans = "log2")
+
+ggplotly(p)
+
+FC_all_means$TubeType <- sub("P", "p", FC_all_means$TubeType)
+FC_all_means$TubeType <- sub("N", "n", FC_all_means$TubeType)
+
+FC_all_means <- FC_all_means %>% mutate(variable = factor(variable, levels=c("miRNAcount_FC", "EndovsRC_FC", "hemolysis_FC", "miRNAfract_FC", "ALC")))
+
+p <- ggplot(FC_all_means, aes(x = variable, y = value, group = Tube, color = Tube))+geom_vline(xintercept = c(1,2,3,4,5), linetype = "dashed", color = "grey") + geom_line() + geom_point() + theme_point + facet_wrap(~TubeType) + labs(title = "summary of fold changes (small RNA)", y = "mean FC", x = NULL, col = NULL) + scale_color_manual(values=color_panel) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_x_discrete(labels=c("ALC_FC" = "ALC", "miRNAfract_FC" = "miRNA frac.", "hemolysis_FC" = "hemolysis", "miRNAcount_FC" = "number of miRNAs", "EndovsRC_FC" = "RNA concentration")) + scale_y_continuous(trans = "log2")
+
+ggsave("./plots/FC_all_summary.pdf", plot = ggplot2::last_plot(), dpi = 300, height = 5, width = 8)
+ggsave("./plots/FC_all_summary.png", plot = ggplot2::last_plot(), dpi = 300, height = 5, width = 8)
+ggsave("./plots/FC_all_summary.svg", plot = ggplot2::last_plot(), dpi = 300, height = 5, width = 8)
+
+```
+
+
+```{r, fig.height=16, fig.width=10}
+figure_L <- ggarrange(
+  hemolysis_lineplot + labs(title = "hemolysis in PFP", col = NULL, x = ""), 
+  RNAconc_lineplot + labs(title = "ratio endogenous counts vs RC spike-in", col = NULL, y = "endogenous/RC"), 
+  miRNACount_lineplot + labs(title = "absolute number of miRNAs", col = NULL, y = "number of miRNAs"), 
+  biotype_lineplot + labs(title = "evolution of miRNA count fraction", col = NULL, y = "miRNA counts / total counts * 100"), 
+  labels = c("A", "B", "C", "D", "E"),
+  common.legend = TRUE, legend = "bottom", ncol = 2, nrow = 2
+  )
+ggsave(figure_L, filename = "./plots/line_individ_overview.png", dpi = 300, height=12, width=12)
+ggsave(figure_L, filename = "./plots/line_individ_overview.pdf", dpi = 300, height=12, width=12)
+ggsave(figure_L, filename = "./plots/line_individ_overview.svg", dpi = 300, height=12, width=12)
+
+
+figure_R <- ggarrange(
+  hemolysis_FC_plot + labs(subtitle = NULL), 
+  RNAconc_FC_plot + labs(subtitle = NULL, title = "fold change of RNA conc. based on RC spikes"), 
+  miRNACount_FC_plot + labs(subtitle = NULL, title = "fold change of number of miRNA"), 
+  ALC_FC_plot + 
+        labs(subtitle = NULL, title = "area left of the curve", x = "tube") +
+        theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)), 
+  biotype_FC_plot + 
+        labs(subtitle = NULL, title = "fold change of miRNA count percentage"), labels = c("A", "B", "C", "D", "E"),
+  common.legend = TRUE, legend = "bottom", ncol = 2, nrow = 3
+  )
+ggsave(figure_R, filename = "./plots/FC_individ_overview.png", dpi = 300, height=12, width=9)
+ggsave(figure_R, filename = "./plots/FC_individ_overview.pdf", dpi = 300, height=12, width=9)
+ggsave(figure_R, filename = "./plots/FC_individ_overview.svg", dpi = 300, height=12, width=9)
+```
+
+# Sessioninfo
+```{r}
+sessionInfo()
+```
