@@ -190,7 +190,7 @@ def removebadqc(sampleID,suffix='',percentage=str(80),quality=str(19),dep='',job
 		command = command + 'rm {0}/{1}_2{2}.fastq; '.format(output_dir, sampleID, suffix)
 		command = command + 'for suffix in $(find {0}/. -type f -name "*temp_1*" | awk -F \'temp_1_\' \'{{print $2}}\' | cut -d \'.\' -f1); '.format(output_dir, index)
 		command = command + 'do; '
-		command = command + '   python /data/gent/vo/000/gvo00027/RNA_seq_pipeline/resources_Annelien/FASTQC_filter.py -r1 {0}/temp_1_$suffix.fastq -r2 {0}/temp_2_$suffix.fastq -p {1} -q {2} -o1 {0}/temp_qc_1_$suffix.fastq -o2 {0}/temp_qc_2_$suffix.fastq; '.format(output_dir, percentage, quality)
+		command = command + '   python FASTQC_filter.py -r1 {0}/temp_1_$suffix.fastq -r2 {0}/temp_2_$suffix.fastq -p {1} -q {2} -o1 {0}/temp_qc_1_$suffix.fastq -o2 {0}/temp_qc_2_$suffix.fastq; '.format(output_dir, percentage, quality)
 		command = command + '   rm {0}/temp_1_$suffix.fastq;    rm {0}/temp_2_$suffix.fastq; '.format(output_dir)
 		command = command + 'done; '
 		command = command + 'cat {0}/temp_qc_1_* > {0}/{1}_1_qc.fastq; rm {0}/temp_qc_1*; '.format(output_dir, sampleID)
