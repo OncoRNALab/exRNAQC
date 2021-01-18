@@ -1,4 +1,4 @@
-#### Running the pipeline
+#### Running the RNA access pipeline
 You need to load Python3.6
 
 ```
