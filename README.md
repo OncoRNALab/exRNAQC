@@ -7,7 +7,7 @@ Questions concerning the GitHub structure can be addressed to any of us.
 Used for RNA access libraries, but with adaptations one can also use it for other library preps. Before starting the analysis you need to know if the data is stranded or unstranded and single or paired end sequenced. The latter, you will notice in the fastq files. If the strandedness is unsure, you can always load a STAR output file in IGV.
 
 ### Setup
-use latest script: RNASeq_preprocessing.py (see Pipelines/FullLengthRNAseq)
+use latest script: RNASeq_preprocessing.py (see Preprocessing/FullLengthRNAseq)
 For more info on how to run it, look at README.md in same folder
 
 ### MultiQC
@@ -26,7 +26,7 @@ Rsync -zvar --exclude="*gz" --exclude="*fa" --exclude="*sam" --exclude="*bam" --
 
 ## Small RNAseq
 ### Setup
-use latest script: smallRNASeq_preprocessing.py (see Pipelines/smallRNAseq)
+use latest script: smallRNASeq_preprocessing.py (see Preprocessing/smallRNAseq)
 For more info on how to run it, look at README.md in same folder
 
 ### Further processing
