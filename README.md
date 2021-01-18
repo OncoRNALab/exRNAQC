@@ -24,7 +24,7 @@ Rsync -zvar --exclude="*gz" --exclude="*fa" --exclude="*sam" --exclude="*bam" --
 
 ## Small RNAseq
 ### Setup
-use latest script: smallRNASeq_preprocessing.py (see Preprocessing/smallRNAseq)
+use latest script: smallRNASeq_preprocessing.py (see Preprocessing/SmallRNAseq)
 For more info on how to run it, look at README.md in same folder
 
 ### Further processing
