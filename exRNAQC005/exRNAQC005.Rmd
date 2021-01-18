@@ -1,0 +1,1628 @@
+---
+title: "exRNAQC005: blood collection tube study, mRNA"
+author: "Ruben Van Paemel on behalf of the exRNAQC study group"
+date: "15/11/2020"
+subtitle: "Novaseq6000, clumpify deduplication, subsampled to 3.6 M reads"
+output:
+  html_document:
+    code_folding: hide
+    highlight: kate
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+    df_print: paged
+  pdf_document:
+    toc: yes
+    latex_engine: lualatex
+    pandoc_args: --listings
+    includes:
+      in_header: preamble.tex
+---
+
+# Introduction 
+## RMarkdown set-up
+First, basic parameters are set up in this RMarkdown, such as loading dependencies, setting paths and setting up a uniform plot structure. 
+
+Most plots in this RMarkdown file are made interactive with ggplot. PDF versions of most plots are in this GitHub repository under `./plots/`
+
+```{r setup, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+require(tidyverse)
+require(biomaRt)
+require(reshape2)
+require(broom)
+require(RColorBrewer)
+require(scales)
+require(ggrepel)
+require(ggbeeswarm)
+require(gridExtra)
+require(ggExtra)
+require(ggplot2)
+require(RCurl)
+require(plotly)
+require(nnls)
+require(ggpubr)
+require(DT)
+
+source("../../Resources/HelperFunctions.R")
+
+# plot style
+theme_point<-theme_bw()+theme(strip.background = element_blank())
+
+theme_bar<-theme_bw()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.line.x = element_blank())
+
+theme_boxplot<-theme_bw()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank(),axis.line.x = element_blank(),legend.position = "none")
+
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
+
+color_panel1 <-  c("#039748","#039748","#ffbf00","#ffbf00","#e35d6a","#e35d6a","#5bb75b","#5bb75b","#428bca","#428bca","#23496b","#23496b","#cc2028","#cc2028","#e87810")
+
+color_panel2 <-  brewer.pal(10, name = "Paired")
+names(color_panel2) <- c("serum","Biomatrica","EDTA separator","EDTA","Citrate","RNA Streck","Roche","DNA Streck", "PAXgene", "ACD-A")
+full_nr <- format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
+
+options(scipen=10000)
+
+# Global variables
+data_path <- "../data_clumpify_pipeline/data_RNaseH_Seq_SK_Biogazelle_Exomes/"
+sample_annotation<-read_csv("./Annotation_exRNAQC005.csv")
+
+sample_annotation <- sample_annotation %>% filter(RunID == "RNaseH_Seq_SK_Biogazelle_Exomes")
+sample_annotation<-sample_annotation %>% mutate(SampleID= paste0(GraphTube,"_",BiologicalReplicate, "_",TimeLapse))
+sample_annotation<-sample_annotation %>% mutate(PlasmaInputVml= PlasmaInputV/1000)
+sample_annotation$TubeType <- ifelse(sample_annotation$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "Preservation", "Non-preservation")
+sample_annotation$GraphTube <- paste0(sample_annotation$GraphTube, "_", sample_annotation$TimeLapse)
+```
+
+
+```{r foldchangefunction}
+# fold change function + make plots
+generateFC <- function(input_df, variable, dfName, AC = FALSE){
+fold_change_input_all <- data.frame() 
+for (duplicate_type in unique(sample_annotation$Tube)){
+  sample_duplicates<-sample_annotation%>% filter(Tube==duplicate_type)
+  if(nrow(sample_duplicates)>1){
+    #print(duplicate_type)
+    #double_positives_sample <-double_positives %>% dplyr::select(MIMATID,sample_duplicates$UniqueID) 
+    input_df_sample <- left_join(sample_duplicates, input_df)
+    # only keep the replicates of one type
+   
+    samples_comb <- combn(sample_duplicates$UniqueID,2) #compare 2 of the 3 samples at a time
+    for (n_col in 1:ncol(samples_comb)) {
+      #print(samples_comb[,n_col])
+      nr_runA <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$TimeLapse)
+      nr_runB <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$TimeLapse)
+      RepA <- sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$BiologicalReplicate
+      RepB <- sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$BiologicalReplicate
+     if ((RepA == RepB)){
+      varname <- paste0("T",nr_runA,"_",nr_runB) #make a name so you can backtrace which replicates are compared
+      #print(varname)
+      compareVar <- input_df %>% filter(UniqueID == paste(samples_comb[1,n_col]) | UniqueID == paste0(samples_comb[2,n_col])) 
+      if (AC == TRUE){
+      plot = "absolute change"
+      intercept = 0
+      if (is.na((abs(compareVar[[variable]][1]) > abs(compareVar[[variable]][2])))){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange=NA)
+      }
+      else if (abs(compareVar[[variable]][1]) >= abs(compareVar[[variable]][2])){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][1])-abs(compareVar[[variable]][2]))
+      } else {
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][2])-abs(compareVar[[variable]][1]))
+      }}
+      else if (AC == FALSE){
+      plot = "fold change"
+      intercept = 1
+      if (is.na((abs(compareVar[[variable]][1]) > abs(compareVar[[variable]][2])))){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange=NA)
+      }
+      else if (abs(compareVar[[variable]][1]) >= abs(compareVar[[variable]][2])){
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][1])/abs(compareVar[[variable]][2]))
+      } else {
+        correlation_samples<- compareVar %>%
+        mutate(foldchange= abs(compareVar[[variable]][2])/abs(compareVar[[variable]][1]))
+      }}
+      
+      FC_input<-correlation_samples %>% 
+        mutate(Tube=duplicate_type, Replicates=varname, BiologicalReplicate = paste0(RepA,"-",RepB)) %>%
+        mutate(ReplID = paste0(Tube,"-",Replicates))
+      FC_input <- FC_input %>% mutate(inputType = paste0(dfName))
+      if (nrow(FC_input) == 2){
+          fold_change_input_all <- rbind(fold_change_input_all, as.data.frame(FC_input))
+        }
+      }
+    }
+  }
+}
+FC <- fold_change_input_all %>% dplyr::group_by(Tube,Replicates,BiologicalReplicate) %>%
+  mutate(ReplID = paste0(Tube,"-",Replicates)) %>% select(c(ReplID, foldchange, Replicates, inputType)) %>% distinct(ReplID, .keep_all = TRUE)
+
+FC$TimePoint <- ifelse(FC$Replicates %in% c("T24_0", "T0_24", "T0_04", "T04_0"), "1st timepoint", ifelse(FC$Replicates %in% c("T72_0", "T0_72", "T0_16", "T16_0"), "2nd timepoint", NA))
+FC$TubeType <- ifelse(FC$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+                       
+print(ggplot(FC %>% filter(!is.na(TimePoint)), aes(x=reorder(Tube,foldchange, FUN = function(x) -mean(x, na.rm = TRUE)), y = foldchange)) + 
+          geom_boxplot() + 
+          geom_beeswarm(groupOnX=TRUE, size = 2.5, aes(col = TimePoint, shape = TubeType)) + 
+          geom_hline(yintercept = intercept, linetype = "dashed", color = "gray") + 
+          labs(subtitle = "ordered by mean (white triangle)", title = paste0(plot, " of ", dfName), y = paste0(plot), x = NULL, col = "comparison", shape = "tube type") +
+          scale_fill_manual(values=color_panel) + 
+          theme_point +theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)) +
+          stat_summary(
+          geom = "point",
+          fun.y = "mean",
+          col = "black",
+          size = 2,
+          shape = 24,
+          fill = "white"
+        )
+      )
+return(FC)
+}
+```
+
+## Experimental setup
+For the evaluation of the different blood collection tubes, blood was drawn from 9 healthy volunteers (3 volunteers for the preservation tube, 3 volunteers for the non-preservation plasma tubes and 3 volunteers for the non-preservation serum tubes). The order of all blood tubes was randomized per donor. All blood tubes were filled to the volume recommended by the manufacturer. We refer to the manuscript and supplemental files for more information about experimental setup. 
+
+*Preservation tubes.* We included 5 different preservation tubes (Streck cell-free RNA BCT, Streck cell-free DNA BCT, PAXgene Blood ccfDNA Tube, Roche cell-free DNA Collection tube and Biomatrica LBgard blood tube) with processing at 3 different timepoints after blood collection (immediately (T0), after 24 hours (T24) and after 72 hours (T72)). Thus, 15 blood tubes were drawn per healthy volunteer. 
+
+*Non-preservation plasma tubes.* We included 4 different non-preservation plasma tubes (BD Vacutainer K2E EDTA spray, Vacuette EDTA gel, BD Vacutainer ACD-A and Vacuette Sodium citrate 3.2%) with processing at 3 different timepoints after blood collection (immediately (T0), after 4 hours (T4) and after 16 hours (T16)). Thus, 12 blood tubes were drawn per healthy volunteer. 
+
+*Non-preservation serum tube.* We included 1 non-preservation serum tube (BD Vacutainer SST II Advance) with processing at 3 different timepoints after blood collection (immediately (T0), after 4 hours (T4) and after 16 hours (T16)). Thus, 3 blood tubes were drawn per healthy volunteer. All tubes were collected from one antecubital vein with the BD Vacutainer push button 21G with 12” tube butterfly needle system.
+
+When 15 tubes were collected, 7 tubes were collected from one antecubital vein and 8 tubes were collected from the contralateral antecubital vein with the BD Vacutainer push button 21G, 7” tube with pre-attached holder tube butterfly needle system. When 12 tubes were collected, 6 tubes were collected from one antecubital vein and 6 tubes were collected from the contralateral antecubital vein with the BD Vacutainer push button 21G with 12” tube butterfly needle system.
+
+## Metric selection
+Five performance metrics were evaluated. In order to select the tubes that are most stable across time points, we calculated for every tube and donor the fold change across different timepoints (excluding T24-72 and T04-16). Thus, six fold-change values were obtained per tube. These were visualized and tubes were ordered based on the mean of these six values. 
+
+1. Hemolysis (see [Fold changes for hemolysis])
+2. Relative RNA concentration, based on endogenous reads vs Sequin spike-in RNA reads (see [Fold changes of relative RNA concentration in plasma])
+3. Absolute number of genes detected (after setting a count cut-off of  6 counts, based on the kit study (exRNAQC004), see [Fold changes of number of genes])
+4. Percentage of counts mapping on protein coding genes (see [Fold changes of protein coding gene count fraction])
+5. Area left of the curve (ALC) calculation (a precision metric) between different timepoints (see [Area left of the curve (ALC)])
+
+An overview of the mean fold changes is presented at the end of this analysis (see [Fold change summary of 5 performance metrics])
+
+An example of the "fold change" plot is depicted below. 
+
+```{r}
+values <- c(10, 50, 100, 5, 15, 30)
+tube <- c("tube A", "tube A", "tube A", "tube B", "tube B", "tube B")
+donor <- c("donor1", "donor1", "donor1", "donor1", "donor1", "donor1")
+time <- c("T0", "T24", "T72", "T0", "T24", "T72")
+FC <- c(5, 10, NA, 3, NA, 6)
+comparison <- c("0h vs 24h", "0h vs 72h", NA, "0h vs 24h", NA, "0h vs 72h")
+
+df_raw <- data.frame(values = values, Tube = tube, BiologicalReplicate = donor, TimeLapse = time, foldchange = FC, Comparison = comparison)
+
+p1 <- ggplot(df_raw,aes(x=TimeLapse,y=as.numeric(`values`), col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA), breaks=values)+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="plot of evolution over time - example", y = "example value", x = "timepoint", col = NULL)
+
+p2 <- ggplot(df_raw, aes(x=reorder(Tube,foldchange, FUN = function(x) -mean(x, na.rm = TRUE)), y = foldchange)) + 
+  geom_boxplot() + geom_beeswarm(groupOnX=TRUE, aes(col = Comparison))  + 
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray") + 
+  labs(subtitle = "ordered by mean", title = paste0("fold change plot - example"), y = "fold change", x = "tube", col = NULL) +
+  scale_fill_manual(values=color_panel) + theme_point+
+  scale_y_continuous(breaks=c(5, 10, 3, 6, 1))+
+  stat_summary(
+    geom = "point",
+    fun.y = "mean",
+    col = "black",
+    size = 3,
+    shape = 24,
+    fill = "white"
+  )
+
+figure <- ggarrange(
+  p1, p2, labels = c("A", "B"),
+  common.legend = FALSE, legend = "bottom", ncol = 2
+)
+
+figure
+```
+
+
+# Sample annotation
+An overview of the samples included in this experiment.
+
+```{r annotation, warning=FALSE, message=FALSE, echo=TRUE}
+datatable(sample_annotation, rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Sample annotation table")
+```
+
+# Platelet counts {.tabset}
+We measured platelet counts for all tubes and in all fractions obtained during centrifugation (whole blood, 1st centrifugation step (termed "PRP"), 2nd centrifugation step (termed "PPP") and the end fraction = plasma after the final centrifugation step (termed "PFP")). Ideally, the platelet count of the "end fraction" should be very close to zero. In the non-preservation tubes, we can see that the platelet counts stay stable between WB and the 1st centrifugation step. Furthermore, there is no big impact of time delay. However, in the preservation tubes, we can see platelet count rising significantly between WB and the 1st centrifugation step and there are more pronounced differences in platelet count for the PAXgene tube between T24 and T72.
+
+The data can be further explored in the interactive plots. All data was rescaled to whole blood at 100%. 
+
+## Overview - standard SOP
+This overview only contains the number of platelets in the "end fraction" (relative to whole blood), because we only used this in the RNA-seq experiment. The other plots give the evolution in the different fractions. 
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+platelets <- read_csv("https://www.dropbox.com/s/qqptbirs5i77nia/PlateletCountPrcts.csv?dl=1")
+platelets$Tube <- gsub("Paxgene", "PAXgene", platelets$Tube)
+platelets$PlateletCountPrct <- as.numeric(platelets$PlateletCountPrct)*100
+platelets_PFP <- platelets %>% filter(Fraction == "PFP")
+platelets_PFP<-platelets_PFP %>% mutate(SampleID= paste0(GraphTube,"_",BiologicalReplicate, "_",TimeLapse))
+platelets_PFP <- left_join(platelets_PFP, sample_annotation %>% select("UniqueID", "SampleID", "TimeLapse"))
+
+p1 <- ggplot(platelets_PFP,aes(x=TimeLapse,y=PlateletCountPrct, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets remaining in PFP (relative to WB)", y = "%", col = NULL, x = NULL)
+
+ggplotly(p1)
+
+ggsave("./plots/platelet_overview_prct.pdf", plot = p1, dpi = 300)
+
+p1 <- ggplot(platelets_PFP,aes(x=TimeLapse,y=PlateletCount, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="absolute platelet count remaining in PFP", y = "count", col = NULL, x = NULL)
+
+ggplotly(p1)
+
+ggsave("./plots/platelet_overview_count.pdf", plot = p1, dpi = 300)
+```
+
+
+## NP - Time 0h {.tabset}
+### By tube
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T0" & TubeType == "Non-preservation"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 2, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T0" & TubeType == "Non-preservation") %>%select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by tube", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+### By donor
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=3, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T0"& TubeType == "Non-preservation"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=Tube))+
+  geom_point()+geom_line(aes(group = Tube))+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T0"& TubeType == "Non-preservation") %>% select(PlateletCountPrct) + 20, na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by donor", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL, x = NULL)
+
+ggplotly(p1)
+```
+
+## P - Time 0h {.tabset}
+### By tube
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T0" & TubeType == "Preservation"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T0" & TubeType == "Preservation") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by tube", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+### By donor
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=3, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T0"& TubeType == "Preservation"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=Tube))+
+  geom_point()+geom_line(aes(group = Tube))+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T0"& TubeType == "Preservation") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by donor", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+
+## Time 4h {.tabset}
+### By tube
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T04"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 2, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T04") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by tube", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+### By donor
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=3, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T04"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=Tube))+
+  geom_point()+geom_line(aes(group = Tube))+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T04") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by donor", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+
+## Time 16h {.tabset}
+### By tube
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T16"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 2, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T16") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="latelets - split by tube", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+### By donor
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=3, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T16"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=Tube))+
+  geom_point()+geom_line(aes(group = Tube))+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T16") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by donor", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+
+## Time 24h {.tabset}
+### By tube
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T24"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T24") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by tube", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+### By donor
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=3, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T24"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=Tube))+
+  geom_point()+geom_line(aes(group = Tube))+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T24") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by donor", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+
+## Time 72h {.tabset}
+### By tube
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T72"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T72") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by tube", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+### By donor
+
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=3, fig.width=8}
+p1 <- ggplot(platelets %>% filter(TimeLapse == "T72"),aes(x=reorder(Fraction, desc(Fraction)),y=PlateletCountPrct, col=Tube))+
+  geom_point()+geom_line(aes(group = Tube))+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 3, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, max(platelets %>% filter(TimeLapse == "T72") %>% select(PlateletCountPrct), na.rm = T)))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="platelets - split by donor", y = "platelet count (rescaled to WB)", x = "count rel. to WB", col = NULL)
+
+ggplotly(p1)
+```
+
+
+# Hemolysis {.tabset}
+Hemolysis was measured with Nanodrop (absorbance at 414 nm) in plasma across all tubes. Overall, we can see that there is less hemolysis in non-preservation tubes and there is more hemolysis in preservation tubes and at later timepoints. Hemolysis is also our first metric. Furthermore, Spearman rank correlation between replicate platelet measurements is high (R = 0.82).
+
+
+## Hemolysis in plasma
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=Hemolysis_PFP, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line(aes(group = BiologicalReplicate))+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="hemolysis in plasma - split by tube", y = "abs at 414 nm", col = NULL, x = NULL)
+
+ggplotly(p1)
+ggsave("./plots/hemolysis_PFP_lineplot_byTube.pdf", plot = p1, dpi = 300)
+
+hemolysis_lineplot <- p1
+p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=Hemolysis_PFP, col=Tube, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~BiologicalReplicate, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="hemolysis in plasma - split by donor", y = "abs at 414 nm", col = NULL, x = NULL)
+
+ggplotly(p1)
+
+ggsave("./plots/hemolysis_PFP_lineplot_byDonor.pdf", plot = p1, dpi = 300)
+```
+
+## Hemolysis replicates correlation
+```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
+p1 <- ggplot(sample_annotation,aes(x=Hemolysis_PPP,y=Hemolysis_PFP, col = Tube))+
+  geom_point()+geom_smooth(method = "lm", se = TRUE, aes(col = FALSE))+
+  theme_point+ geom_abline(intercept=0, slope=1, color = "gray", linetype = "dashed")+
+  #facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, 0.8))+
+  scale_x_continuous(limits = c(0, 0.8))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="Hemolysis correlation between replicates", y = "Abs at 414 nm in replicate 2" , x = "Abs at 414 nm in replicate 1", col = NULL, x = NULL) + 
+  stat_cor(method = "spearman", aes(col = NULL, label=paste(..r.label.., cut(..p..,breaks = c(-Inf, 0.0001, 0.001, 0.01, 0.05, Inf), labels = c("'****'", "'***'", "'**'", "'*'", "'ns'")), sep = "~")))
+
+p1
+ggsave("./plots/hemolysis_PFP_PPP_corr.pdf", plot = p1, dpi = 300)
+```
+
+## Fold changes for hemolysis
+```{r}
+tmp_summary <- sample_annotation %>% group_by(GraphTube) %>% dplyr::summarize(mean_Hemolysis_PFP= mean(Hemolysis_PFP), sd_Hemolysis_PFP=sd(Hemolysis_PFP)) %>% mutate(CV_Hemolysis_PFP = sd_Hemolysis_PFP/mean_Hemolysis_PFP*100) %>% left_join(unique(dplyr::select(sample_annotation, c("Tube","GraphTube"))), by="GraphTube")
+
+FC <- generateFC(input_df = sample_annotation %>% filter(!is.na(Hemolysis_PFP)), variable = "Hemolysis_PFP", dfName = "hemolysis in PFP")
+
+names(FC)[names(FC) == 'foldchange'] <- 'hemolysis_FC'
+
+FC_all <- FC %>% select(-inputType)
+
+#FC_all <- merge(FC %>% select(-inputType), FC_all, on = c("Tube", "BiologicalReplicate", "ReplID", "Replicates"))
+
+ggsave("./plots/hemolysis_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+hemolysis_FC_plot <- ggplot2::last_plot()
+```
+
+# Sequencing and preprocessing
+## Run metrics
+The samples were sequenced on 2019-03-16 on a NovaSeq 6000, S2 flow cell, 2x75 cycles, Illumina. 
+Basic metrics: 
+
+* %PF: 71.39%
+* % ≥Q30: 94.72% 
+* Yield: 674.50 Gbp
+
+The raw data is available at: [RNAseH_Seq_SK_Biogazelle_Exomes](LINK WILL BE ADDED AFTER UPLOAD TO EGA)
+
+Some samples did not receive many reads compared to the others. This seems to be related to the tube type (DNA Streck, RNA streck and one Biomatrica tube). Four out of seven samples with read % < 0.5 are from donor 2. After library construction, it was observed that some samples had a low concentration based on the Fragment Analyser run and Kapa qPCR. Therefore, during equimolar pooling, a lower amount than the required amount (to reach equimolarity) had to be added. We observed that the samples that did not reach a high enough concentration are the same samples that have a low number of reads going to them. Hover on points to see sample IDs. 
+
+```{r indexingQC, warning=FALSE, message=FALSE, echo=TRUE, fig.cap="Indexing QC", fig.align="center", fig.height=5, fig.width=10}
+p1 <- ggplot(sample_annotation,aes(x=SampleID,y=index_prct_run1, color = Tube))+
+  geom_point()+
+  ylim(0,2) + theme_bar+ theme(axis.text.x=element_blank()) +
+  labs(y = "percentage reads per sample", title="basespace indexing %", col = NULL)+
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") +
+  scale_color_manual(values=color_panel)
+
+ggplotly(p1)
+```
+
+
+## Pipeline parameters and MultiQC reports
+MultiQC reports of the fastq files can be found in this GitHub repository under `logs/20200116.RNaseH_Seq_SK_Biogazelle_Exomes/fastq_only_multiqc.html`
+
+MultiQC reports of the pipeline can be found  in this GitHub repository under `logs/20200116.RNaseH_Seq_SK_Biogazelle_Exomes/pipeline_multiqc_report.html`
+
+The script of the pipeline to see the parameters can be found in this GitHub repository under `logs/20200116.RNaseH_Seq_SK_Biogazelle_Exomes/20191126_ClumpifyPipelineStrandedness.py` and `logs/20200116.RNaseH_Seq_SK_Biogazelle_Exomes/runPipelineStrandedness.sh`.
+
+
+## Number of reads in different stages of the pipeline
+All reads were subsampled to 3.6 M reads so that there is a fair comparison between all tubes (e.g. if one sample is sequenced deeper it will probably yield more genes compared to a sample that was sequenced less deep).
+
+The reads were counted on the fastq level and plotted in the following plots. We used these commands to count the reads in the fastq files:
+
+```
+for sample in $(ls | grep "RNA0"); do lines=4; qcfil_lines=`zcat ${sample}/${sample}_1.fastq.gz | wc -l`; echo $((qcfil_lines/lines)) $(echo $sample | cut -d'-' -f1); done >> lines_fastq_pre.txt
+
+for sample in $(ls | grep "RNA0"); do lines=4; qcfil_lines=`zcat ${sample}/dedup_clumpify-subs_atstart/${sample}_1_qc_subs.fastq.gz | wc -l`; echo $((qcfil_lines/lines)) $(echo $sample | cut -d'-' -f1); done >> lines_fastq_subs.txt
+
+for sample in $(ls | grep "RNA0"); do lines=4; qcfil_lines=`zcat ${sample}/dedup_clumpify-subs_atstart/${sample}_1_qc_subs_clumped.fastq.gz | wc -l`; echo $((qcfil_lines/lines)) $(echo $sample | cut -d'-' -f1); done >> lines_fastq_post.txt
+```
+
+```{r}
+pd <- position_dodge(0.2)
+reads_pre = read.table(paste0(data_path, "lines_fastq_pre.txt"),header=FALSE, col.names = c("pre", "UniqueID")) 
+reads_subs = read.table(paste0(data_path, "lines_fastq_subs.txt"),header=FALSE, col.names = c("subs", "UniqueID")) 
+reads_post = read.table(paste0(data_path, "lines_fastq_post.txt"),header=FALSE, col.names = c("post", "UniqueID")) 
+
+reads <- full_join(reads_pre,reads_subs,by=c("UniqueID"))
+reads <- full_join(reads,reads_post,by=c("UniqueID"))
+reads_melt <- reads %>% melt(value.name = "reads")
+reads$duplicates <- round(1 - reads$post/reads$subs,4)
+
+reads <- reads %>% select(UniqueID, duplicates, post, subs, pre)
+
+duplicates <- full_join(reads, sample_annotation, by = c("UniqueID"))
+reads_melt <- full_join(reads_melt, sample_annotation, by = c("UniqueID"))
+
+pd <- position_dodge(0.2)
+
+# ggplot(reads_melt,aes(x=reorder(variable, desc(variable)),y=reads, group = PlasmaID, color = Tube))+
+# 	   geom_line(position = pd)+
+# 	  geom_point(position = pd) +
+# 	  facet_wrap(~RunID, ncol = 3)+scale_y_continuous(trans = "log10") +
+#     geom_hline(yintercept = 3000000, linetype = "dashed", color = "gray")+
+# 	  labs(title="Reads per sequencing run", y = "# reads", x = "stage in pipeline") +
+# 	  theme_bar+ theme(axis.text.x=element_text(angle=90, hjust=1)) +
+#     scale_x_discrete(labels = c("raw read count","read count after subsampling", "reads count after pipeline"), limits=c("pre", "subs", "post"))+
+# 	  scale_color_manual(values=color_panel)
+
+reads_overview <- duplicates %>% select("UniqueID", "SampleID", "pre", "subs", "post", "duplicates")
+
+# Reads should be subsampled to: reads_melt %>% filter(variable == "pre") %>% select(reads) %>% min()
+```
+
+## Kallisto alignment score
+Pseudo-alignment rate with Kallisto v0.44 (to ensembl v91) is similar in most samples, except for the Streck tubes and Roche tube.
+
+```{r}
+
+kallisto_aligned <- read_tsv("../logs/20200116.RNaseH_Seq_SK_Biogazelle_Exomes/pipeline_multiqc_data/multiqc_data/multiqc_kallisto.txt")
+kallisto_aligned <- kallisto_aligned %>% filter(Sample != "RNA004905L1-244333104_1_qc_subs_clumped")
+kallisto_aligned$`Sample` <- gsub("-.*", "", kallisto_aligned$`Sample`)
+
+kallisto_aligned <- merge(sample_annotation, kallisto_aligned, by.x = "UniqueID", by.y = "Sample")
+kallisto_aligned$percent_aligned <- round(kallisto_aligned$percent_aligned, 2)
+
+ggplot(kallisto_aligned %>% filter(RunID == "RNaseH_Seq_SK_Biogazelle_Exomes"),aes(x=GraphTube,y=percent_aligned, group = PlasmaID, color = Tube))+
+  geom_point()+
+  coord_flip()+
+  labs(x="",y="% alignment", col = "tube")+
+  scale_colour_manual(values=color_panel)+
+  theme_point +
+  scale_y_continuous(limits=c(0,100)) +
+  theme(panel.grid.major.x = element_line(colour = "lightgrey", linetype = "dashed", size=0.2))+
+  labs(title = "pseudoalignment with Kallisto", col = NULL)
+ggsave("./plots/alignment_percentage.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+reads_overview <- full_join(reads_overview, kallisto_aligned %>% select("percent_aligned", "UniqueID"), by = c("UniqueID"))
+```
+
+## Duplicate rate 
+As Clumpify (version bundled with BBMap version 38.28) does not output a log file with duplicate stats, we estimated duplicate reads by dividing the number of reads after Clumpify by the number of reads after subsampling (as this is the only step that removes reads, so all removed reads are duplicates). As expected because of the low RNA input, duplicate percentages range from 85-99%. 
+
+```{r}
+ggplot(duplicates %>% filter(RunID == "RNaseH_Seq_SK_Biogazelle_Exomes"),aes(x=GraphTube,y=duplicates*100, group = PlasmaID, color = Tube))+
+  geom_point()+
+  labs(x="",y="% duplication", col = "tube")+
+  scale_colour_manual(values=color_panel)+
+  theme_point +
+  scale_y_continuous(limits=c(NA,100)) +
+  coord_flip()+
+  theme(panel.grid.major.x = element_line(colour = "lightgrey", linetype = "dashed", size=0.2))+
+  labs(title = "duplicate rate with Clumpify", col = NULL)
+ggsave("./plots/duplicate_percentage.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+ggplot(reads_melt %>% filter(RunID == "RNaseH_Seq_SK_Biogazelle_Exomes" & variable == "post"),aes(x=GraphTube,y=reads, group = PlasmaID, color = Tube))+
+  geom_point()+
+  labs(x="",y="reads remaining", title = "duplicate rate with Clumpify (abs. # reads)", col = NULL)+
+  scale_colour_manual(values=color_panel)+
+  theme_point +
+  scale_y_continuous(limits=c(NA,NA)) +
+  coord_flip()+
+  theme(panel.grid.major.x = element_line(colour = "lightgrey", linetype = "dashed", size=0.2))
+
+ggsave("./plots/duplicate_counts_after_dup.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+## Strandedness
+Strandedness was calculated with RSeQC (version 2.6.4) for all samples. We can see that strandedness is substantially lower than the expected 100% in all DNA/RNA Streck tubes. We hypothesize that this could be due to incompatibility of the Streck preservation medium with the downstream DNase treatment of the RNA eluate. 
+
+```{r}
+Strandedness = read.table(paste0(data_path, "RSeQC_output_overview.txt"),header=F)
+
+colnames(Strandedness) = c("sample_name","strandedness")
+Strandedness$sample_name <- gsub("-.*$","",Strandedness$sample_name)
+
+Strandedness <- left_join(sample_annotation, Strandedness, by = c("UniqueID" = "sample_name"))
+Strandedness$strandedness <- round(Strandedness$strandedness, 4)
+
+p1 = ggplot(Strandedness,aes(x=GraphTube,y=100*strandedness,col=Tube))+
+  geom_point()+
+  coord_flip()+
+  theme_point +
+  labs(y = "% correct strand with RSeQC", x= "tube", title = NULL, col = NULL)+
+  scale_colour_manual(values=color_panel)
+
+p1
+
+ggsave("./plots/strandedness.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+reads_overview <- full_join(reads_overview, Strandedness %>% select("strandedness", "UniqueID"), by = c("UniqueID"))
+colnames(reads_overview) <- c("UniqueID", "SampleID", "raw_reads", "post_subsampling", "post_deduplication", "duplicate_frac", "kallisto_prct_alignment", "strandedness")
+```
+
+## Quality control metrics - table
+```{r}
+datatable(reads_overview, rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Quality control metrics")
+
+write_tsv(reads_overview, "./exRNAQC005_mRNA_overview_table.tsv")
+```
+
+## Reading count data
+Our pipeline was written to count reads using Kallisto, based on Ensembl v91. In this step, we make the raw count dataframes, as well as the counts per million (cpm) and transcripts per kilobase million (tpm) dataframes. The ERCC/Sequin spikes are filtered out, we group transcripts per gene and then sum the counts or tpm. 
+
+```{r readdata, warning=FALSE, message=FALSE, echo=TRUE, cache = TRUE}
+ensembl <- useEnsembl(biomart="ensembl",dataset="hsapiens_gene_ensembl", version = 91)
+genes_ens <- getBM(attributes=c('ensembl_gene_id','ensembl_transcript_id'),mart=ensembl)
+genes_ens<-rbind(genes_ens,c("rDNA45S","gi|555853|gb|U13369.1|HSU13369"))
+
+if (!file.exists("./kallisto_counts.tsv") & !file.exists("./kallisto_tpm.tsv")){
+  kallisto<-as.data.frame(genes_ens)
+  kallisto_tpm<-as.data.frame(genes_ens)
+  files<-list.files(data_path,recursive=TRUE)
+  files<-files[grep("abundance.tsv", files)]
+  
+  for(i in 1:length(files)){
+    tmp<-data.table::fread(paste0(data_path,files[i]), header=T, sep="\t", data.table=FALSE)
+    name_sample<-gsub(".*/","",sub("-[0-9]*/dedup_clumpify-subs_atstart/[0-9]*_klout","",sub("/abundance.tsv","",files[i])))
+    tmp1<-tmp[,c("target_id","est_counts")]
+    tmp2<-tmp[,c("target_id","tpm")]
+    colnames(tmp1)<-c("target_id",name_sample)
+    colnames(tmp2)<-c("target_id",name_sample)
+    kallisto<-full_join(kallisto,tmp1,by=c("ensembl_transcript_id"="target_id"))
+    kallisto_tpm<-full_join(kallisto_tpm,tmp2,by=c("ensembl_transcript_id"="target_id"))
+  }
+  write_tsv(kallisto, "./kallisto_counts.tsv")
+  write_tsv(kallisto_tpm, "./kallisto_tpm.tsv")
+} else {
+  kallisto <- read_tsv("./kallisto_counts.tsv")
+  kallisto_tpm <- read_tsv("./kallisto_tpm.tsv")
+}
+
+kallisto <- as.tibble(kallisto)
+kallisto_tpm <- as.tibble(kallisto_tpm)
+
+kallisto <- kallisto[rowSums(kallisto %>% select_if(is.numeric),na.rm=TRUE)>0,] 
+kallisto_tpm <- kallisto_tpm[rowSums(kallisto_tpm %>% select_if(is.numeric),na.rm=TRUE)>0,]
+
+kallisto$ensembl_gene_id <- ifelse(grepl("ERCC", kallisto$ensembl_transcript_id), "ERCC", 
+                                   ifelse(grepl("R1|R2", kallisto$ensembl_transcript_id), "Sequin",
+                                   kallisto$ensembl_gene_id))
+
+kallisto_tpm$ensembl_gene_id <- ifelse(grepl("ERCC", kallisto_tpm$ensembl_transcript_id), "ERCC", 
+                                   ifelse(grepl("R1|R2", kallisto_tpm$ensembl_transcript_id), "Sequin",
+                                   kallisto_tpm$ensembl_gene_id))
+
+kallisto_gene_level <- kallisto %>% filter(!str_detect(ensembl_transcript_id,"Spike")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE) 
+
+kallisto_genes <- kallisto %>% filter(!str_detect(ensembl_transcript_id,"ERCC|R1|R2|Spike")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE) #filter out spikes and group counts by gene_id (instead of transcript_id)
+
+kallisto_genes_tpm <- kallisto_tpm %>% filter(!str_detect(ensembl_transcript_id,"ERCC|R1|R2|Spike")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE)
+
+kallisto_cpm <- as.data.frame(apply(kallisto %>% select_if(is.numeric),2,function(x) {10^6*x/sum(x,na.rm=TRUE)}))
+kallisto_cpm$ensembl_transcript_id <- kallisto$ensembl_transcript_id
+kallisto_cpm$ensembl_gene_id <- kallisto$ensembl_gene_id
+
+kallisto_genes_cpm<-kallisto_cpm %>% filter(!str_detect(ensembl_transcript_id,"ERCC|R1|R2|Spike")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE)
+```
+
+# ERCC and Sequin RNA spikes
+In our samples, we add two types of spikes:
+
+1. Sequin spikes were added to the plasma lysate (during RNA isolation) and are thus indicative of RNA extraction efficiency. The number of reads going to Sequin spikes is inversely correlated with the amount of endogenous RNA. 
+1. ERCC spikes were added to the RNA eluate (after RNA isolation) and are thus indicative of RNA yield (if corrected for the elution volume, but in this experiment the elution volume is identical accross all samples). Similarly, more ERCC spikes indicates less endogenous RNA in eluate. 
+ 
+  
+The original spike-in concentrations are described in annotation files coming from the providers.
+
+```{r spike annotation, warning=FALSE, message=FALSE}
+spike_conc_ERCC<-read_tsv("../../Resources/cms_095046.txt")
+colnames(spike_conc_ERCC)<-c("numb_id","spike_id","subgroup","mix1","mix2","FC","log2mix1mix2")
+spike_conc_ERCC<-spike_conc_ERCC[,c("spike_id","mix1")]
+
+spike_conc_Seq<-read_tsv("../../Resources/RNAsequins_isoform_mix.v2.2.tsv")
+colnames(spike_conc_Seq)<-c("spike_id","length","mix1","mix2")
+spike_conc_Seq<-spike_conc_Seq[,c("spike_id","mix1")]
+
+spike_conc_gene_Seq<-read_tsv("../../Resources/RNAsequins_gene_mix.v2.2.tsv")
+colnames(spike_conc_gene_Seq)<-c("spike_id","length","mix1","mix2")
+spike_conc_gene_Seq<-spike_conc_gene_Seq[,c("spike_id","mix1")]
+```
+
+## Total amount of spikes
+We can look at the absolute number of spike counts. However, this is not that informative, it is better to look at ratio of endogenous RNA reads to spike reads (see [Endogenous reads vs spike reads]).
+
+```{r spikes_sum_subsampled, fig.height=4, fig.width=6, fig.align="center"}
+kallisto_spikes <- kallisto %>% filter(str_detect(ensembl_transcript_id,"ERCC|R1|R2")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE) #filter out spikes and group counts by gene_id (instead of transcript_id)
+kallisto_spikes_tpm <- kallisto_tpm %>% filter(str_detect(ensembl_transcript_id,"ERCC|R1|R2")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE)
+
+p1 <- ggplot(gather(kallisto_spikes, key="UniqueID", value="est_counts", -ensembl_gene_id) %>% left_join(sample_annotation, by="UniqueID"),
+       aes(x=Tube, y=(est_counts/min(est_counts)), colour=ensembl_gene_id)) +
+  geom_point()+
+  scale_y_log10(labels=full_nr)+
+  coord_flip() +
+  theme_point +
+  geom_hline(yintercept=1, color="grey88",size=0.3) +
+  theme(axis.ticks.y = element_blank(),axis.line.y = element_blank(),panel.grid.major.y=element_line(linetype = "dashed",color="lightgray",size=0.2),
+        legend.title = element_blank()) +
+  labs(title="ERCC and Sequin spikes", subtitle="3.6 M subsampling & duplicates removed", y="relative sum of spike counts (rescaled to min value)",x="")+
+  scale_color_manual(values=color_panel[5:6])
+
+ggplotly(p1)
+```
+
+
+## ERCC {.tabset}
+- **ERCC spikes are added to RNA eluate*
+
+### ERCC TPM
+- These plots are based on TPM values as this corrects for length of the spike.
+- Each facet focuses on different spike: for this particular spike the TPM in every sample is shown (triplicates are directly next to each other)
+   - Facets (spikes) ordered from high to low according to mean TPM of respective spike
+   - Darker colour corresponds to higher concentration in the original mix (according to manufacturer, so the mix that was added to the eluate)
+   - Small discrepancy between concentration order and TPM order, but in general good correspondance. 
+- In the top plots: similar pattern in terms of TPM of the respective spike
+  - the replicates are next to each other in x-axis and their ERCC TPM appears to be similar (reproducible pattern per triplicate)
+  - Here, we actually see two parameters reflected: amount of endogous RNA (from higher input and/or better extraction -> more endogenous -> less ERCC) & library prep variability
+- DNA Streck and RNA Streck are outliers in these plots, indicating that there are more spike reads and fewer endogenous reads in these tubes. 
+
+```{r prepare plots ERCC, warning=FALSE, message=FALSE}
+spikes_ERCC<-kallisto_tpm %>% filter(str_detect(ensembl_transcript_id,"ERCC")) %>% dplyr::select(-ensembl_gene_id) %>% dplyr::rename(spike_id=ensembl_transcript_id)
+spikes_ERCC<-spikes_ERCC[rowSums(spikes_ERCC %>% select_if(is.numeric))>0,]
+spikes_ERCC_melt<-melt(spikes_ERCC)
+spikes_ERCC_melt<-left_join(spikes_ERCC_melt,spike_conc_ERCC,by="spike_id") %>% mutate(UniqueID=variable)
+spikes_ERCC_melt<-left_join(spikes_ERCC_melt,sample_annotation,by="UniqueID")
+spikes_ERCC_melt$spike_id<-factor(spikes_ERCC_melt$spike_id,levels=spikes_ERCC_melt$spike_id[rev(order(rowMeans(spikes_ERCC %>% select_if(is.numeric))))]) #order decreasing acc to row mean
+```
+
+```{r plots ERCC1, echo=FALSE, fig.height=8, fig.width=10, fig.cap="TPM per spike (different plots) and per sample (x-axis)"}
+p1 <- ggplot(spikes_ERCC_melt, aes(y = log(value+1,10), x=SampleID, colour = mix1, fill = mix1)) + 
+  geom_bar(stat="identity") + 
+  facet_wrap(~spike_id) +
+  theme_bar+
+  labs(title="ERCC log10 TPM per spike", y="log10(TPM+1)", x=NULL)+
+  scale_fill_gradient(high="red",low="orange")+
+  scale_color_gradient(high="red",low="orange")+
+  theme(strip.text.x = element_text(size=6),axis.text.x = element_blank())
+
+ggplotly(p1)
+```
+
+### Linear models
+- Linear model for each sample based on the expression of the spikes (because the spikes were added in a known concentration). 
+  - Linear models based on the 20 highest spikes (according to rowmeans) because these spikes are picked up in (almost) every sample
+- Plot shows that there is indeed a good fit.
+
+```{r plots ERCC2, echo=FALSE, fig.height=16, fig.width=10}
+highest_spikes <- levels(spikes_ERCC_melt$spike_id)[1:20] #get the names of the 20 highest spikes (levels are sorted according to rowmean from high to low)
+spikes_ERCC_melt_high <- filter(spikes_ERCC_melt, spike_id %in% highest_spikes)
+
+fit_augment_spikes_ERCC<-spikes_ERCC_melt_high %>% 
+  group_by(SampleID) %>% 
+  do(broom::augment(lm(log(value+1,10)~log(mix1+1,10),data = .))) %>%
+  dplyr::rename(logvalue=`log(value + 1, 10)`,logmix1=`log(mix1 + 1, 10)`)
+
+fit_glance_spikes_ERCC<-spikes_ERCC_melt_high %>% 
+  group_by(SampleID) %>% 
+  do(broom::glance(lm(log(value+1,10)~log(mix1+1,10),data = .)))
+
+
+spikes_ERCC_melt_high <- left_join(spikes_ERCC_melt_high, as.tibble(cbind(SampleID= fit_glance_spikes_ERCC$SampleID, R2= fit_glance_spikes_ERCC$r.squared)), by="SampleID")
+
+spikes_ERCC_melt_high$lab = paste0(spikes_ERCC_melt_high$GraphTube, "\nR^2 = ", round(as.numeric(spikes_ERCC_melt_high$R2),3)) #get Rsquared value for each plot
+p1 <- ggplot(spikes_ERCC_melt_high, aes(y=log(value+1,10), x=log(mix1+1,10))) + 
+  geom_jitter(cex=0.2) +
+  theme_point+
+  labs(title="ERCC log10 tpm per sample (20 highest spikes)", y="log10(counts+1)", x="log10(mix_conc+1)")+
+  stat_smooth(method=lm,color="darkgray",se=TRUE, fill= "gray", level = .95,size=0.5)+
+  scale_x_continuous(limits=c(2,NA)) +
+  facet_wrap(~as.character(lab)) +
+  theme(strip.text.x = element_text(size=9))
+
+p1
+```
+
+## Sequin {.tabset}
+
+- Sequin spikes are added **during** RNA isolation.
+- **Sequin input volume was proportional to plasma input volume** (2 μl Sequin per 200 μl plasma). Thus, the ratio of Sequin spikes to endogenous RNA is the same at the start of the experiment. 
+
+### Sequin TPM
+These plots are based on TPM values as this corrects for length of the spike. The ratio Sequin to endogenous RNA is the same in every tube in start of experiment + all sequencing data subsampled to 3.6 M. Thus, we expect to have an equal count of Sequins in every tube if all tubes perform equally. **The differences that we see here are not related to differences in concentrations at the start**
+
+- **What causes remaining variability?**
+  - different tubes results in endogenous RNA differences
+  - extraction efficiency (less efficient extraction results in less Sequins (and endogenous RNA) in eluate)
+  - PCR duplicate removal (more reads removed in some samples)
+- Each facet on the image focuses on different spike: for that spike the TPM in every sample is shown (triplicates are directly next to each other)
+  - Facets on the figures (= spikes) are ordered from high to low according to mean TPM of respective spike
+    - Darker colour corresponds to higher concentration in the original mix (according to manufacturer)
+    - Again, some discrepancy between concentration order and TPM order
+  - Even for the spikes with relatively high concentration in the mix, the spike is not detected in some samples 
+    - Some spikes seem to drop out very quickly
+
+```{r prepare plots Sequins, message=FALSE, warning=FALSE}
+spikes_Seq<-kallisto_tpm %>% filter(str_detect(ensembl_transcript_id,"R1|R2")) %>% dplyr::select(-ensembl_gene_id) %>% dplyr::rename(spike_id=ensembl_transcript_id)
+spikes_Seq<-spikes_Seq[rowSums(spikes_Seq %>% select_if(is.numeric))>0,]
+spikes_Seq$gene_spike_id<-sub("_[0-9]$","",spikes_Seq$spike_id)
+spikes_Seq_gene<- spikes_Seq %>% group_by(gene_spike_id) %>% summarise_if(is.numeric,sum)
+spikes_Seq_melt <- melt(spikes_Seq_gene)
+spikes_Seq_melt<-left_join(spikes_Seq_melt,spike_conc_gene_Seq,by=c("gene_spike_id"="spike_id"))
+spikes_Seq_melt<- spikes_Seq_melt %>% dplyr::rename(UniqueID=variable)
+spikes_Seq_melt<-left_join(spikes_Seq_melt,sample_annotation)
+spikes_Seq_melt$gene_spike_id<-factor(spikes_Seq_melt$gene_spike_id,levels=spikes_Seq_melt$gene_spike_id[rev(order(rowMeans(spikes_Seq_gene[,-1])))])
+```
+
+```{r plots Sequins, echo=FALSE, fig.width=10, fig.height=8}
+p1 <- ggplot(spikes_Seq_melt, aes(y = log(value*EluateV+1,10), x=SampleID, colour = mix1, fill = mix1)) + 
+  geom_bar(stat="identity") + 
+  facet_wrap(~gene_spike_id) +
+  theme_bar+
+  labs(title="Sequin log10 TPM in total eluate (per spike)",
+       subtitle="Sequin input V was adapted acc. to plasma input V", y="log10(TPM*EluateV+1)")+
+  theme(strip.text.x = element_text(size=6),axis.text.x = element_blank())+
+  scale_fill_gradient(high="red",low="orange")+
+  scale_color_gradient(high="red",low="orange")
+
+ggplotly(p1)
+```
+
+### Linear models
+- Linear model for each sample based on the expression of the spikes (because the spikes were added in a known concentration). 
+  - Linear models based on the 20 highest spikes (according to rowmeans) because these spikes are picked up in (almost) every sample
+
+- Plot shows that in general, the higher the concentration in the mix, the higher the TPM, but the R^2 values are a lot lower than for ERCCs (similar to exRNAQC004).
+
+```{r plots Sequins lm, echo=FALSE, fig.height=16, fig.width=10}
+highest_spikes <- levels(spikes_Seq_melt$gene_spike_id)[1:16] #get the names of the 16 highest spikes (levels are sorted according to rowmean from high to low)
+spikes_Seq_melt_high <- filter(spikes_Seq_melt, gene_spike_id %in% highest_spikes)
+
+fit_augment_spikes_Seq<-spikes_Seq_melt_high %>% 
+  group_by(SampleID) %>% 
+  do(broom::augment(lm(log(value+1,10)~log(mix1+1,10),data = .))) %>%
+  dplyr::rename(logvalue=`log(value + 1, 10)`,logmix1=`log(mix1 + 1, 10)`)
+
+fit_glance_spikes_Seq<-spikes_Seq_melt_high %>% 
+  group_by(SampleID) %>% 
+  do(broom::glance(lm(log(value+1,10)~log(mix1+1,10),data = .)))
+
+spikes_Seq_melt_high <- left_join(spikes_Seq_melt_high, as.tibble(cbind(SampleID= fit_glance_spikes_Seq$SampleID, R2= fit_glance_spikes_Seq$r.squared)), by="SampleID")
+spikes_Seq_melt_high$lab = paste0(spikes_Seq_melt_high$GraphTube, "\nR^2 = ", round(as.numeric(spikes_Seq_melt_high$R2),3)) #get Rsquared value for each plot
+p1 <- ggplot(spikes_Seq_melt_high, aes(y=log(value+1,10), x=log(mix1+1,10))) + 
+  geom_jitter(cex=0.2) +
+  theme_point+
+  labs(title="Sequin log10 tpm per sample (16 highest spikes)", y="log10(counts+1)", x="log10(mix_conc+1)")+
+  stat_smooth(method=lm,color="darkgray",se=TRUE, fill= "gray", level = .95,size=0.5)+
+  scale_x_continuous(limits=c(2,NA)) +
+  facet_wrap(~as.character(lab)) +
+  theme(strip.text.x = element_text(size=9))
+
+p1
+```
+
+## Endogenous reads vs spike reads
+
+### Endogenous vs Sequins
+The volume of Sequin spikes that is added is proportional to plasma input volume (1 microL Sequin/ 100 microL plasma)
+
+  - If the RNA-isolation does not selectively favour Sequins or endogenous RNA, the ratio Sequin vs endogenous RNA should be constant throughout experiment.
+  - In absence of length bias, differences in Sequin/endogenous are related to tube content, experimental error (not exact input volume) or bias towards RNA content.
+
+```{r SEQUIN, fig.height=5, fig.width=7}
+
+gene_level_ratios <- rbind(kallisto_genes %>% summarise_if(is.numeric, sum, na.rm=TRUE),
+                           kallisto_spikes %>% select_if(is.numeric)) %>%
+  cbind(type=c("endogenous","ERCC","Sequin")) %>% #add the type in a new column
+  gather(., key="UniqueID",value="counts",-type) %>%  #long format
+  spread(., key = "type", value="counts") %>%
+  mutate("ERCCvsEndo"=ERCC/endogenous, 
+         "SeqvsEndo"=Sequin/endogenous,
+         "EndovsSeq"=endogenous/Sequin,
+         "EndovsERCC"= endogenous/ERCC) %>%
+  left_join(., sample_annotation %>% dplyr::select(c("UniqueID","Tube","SampleID","GraphTube","EluateV","PlasmaInputV", "TimeLapse", "BiologicalReplicate")), by="UniqueID")  #add annotation
+
+p1 <- ggplot(gene_level_ratios, aes(x=GraphTube, y=EndovsSeq, fill=Tube, colour=Tube)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  scale_fill_manual(values=color_panel) +
+  scale_colour_manual(values=color_panel) +
+  theme_bar +
+  labs(x="", y="endogenous/sequin", title="relative RNA concentration in plasma", subtitle="endogenous RNA vs Sequin spikes", col = NULL, fill = NULL)
+
+ggplotly(p1)
+
+ggsave("./plots/SeqVsEndo.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+# Plot original ratio Sequin/endo
+spikes1 <- ggplot(gene_level_ratios, aes(x=GraphTube, y=EndovsSeq, fill=Tube, colour=Tube)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  labs(x="", y="endogenous/sequin") +
+  scale_fill_manual(values=color_panel) +
+  scale_colour_manual(values=color_panel) +
+  theme_bar +
+  labs(x="", y="endogenous/sequin", title="endogenous RNA vs Sequin counts")
+#calculate statistics for Sequin/endogenous (sd, sem, 95% ci)
+test <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsSeq", groupvar=c("GraphTube"))
+# Plot ERCC/endo in log10 scale
+spikes2 <- ggplot(test, aes(x=GraphTube, y=10^measurevar_log_resc)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=Tube), size=1.2) +
+  geom_point(data=test, aes(x=GraphTube, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="relative Endo/Sequin", title="endogenous vs Sequin counts (rescaled)", col = "") +
+  scale_colour_manual(values=color_panel) +
+  scale_y_log10() +
+  theme_bar 
+
+p1 <- ggplot(test,aes(x=TimeLapse,y=10^measurevar_log_resc, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + 
+  scale_y_log10() +
+  labs(x="", y="relative Endogenous/Sequin", title="endogenous counts vs Sequin (rescaled to lowest)", col = "")
+
+ggplotly(p1)
+RNAconc_lineplot <- p1
+ggsave("./plots/SeqVsEndo_rescaled_linePlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+### Fold changes of relative RNA concentration in plasma
+In this metric, we can observe that the RNA concentration in the plasma is much more variable in the preservation tubes, while the fold changes in the non-preservation tubes are very close to 1. 
+
+```{R}
+FC <- generateFC(input_df = test, variable = "EndovsSeq", dfName = "RNA concentration based on Sequin")
+
+names(FC)[names(FC) == 'foldchange'] <- 'EndoVsSeq_FC'
+
+FC_all <- merge(FC %>% select(-inputType), FC_all, on = c("Tube", "BiologicalReplicate", "ReplID", "Replicates"))
+
+ggsave("./plots/RNAconc_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+RNAconc_FC_plot <- ggplot2::last_plot()
+```
+
+
+### Relative RNA concentration in eluate
+The ratio of endogenous RNA to ERCC is inverse proportional to the concentration of endogenous RNA in the eluate. More endogenous RNA in eluate after RNA isolation results in proportionally fewer reads going to ERCC spikes, and thus a higher ratio of endogenous/ERCC. 
+
+```{r CONCENTRATION, fig.height=5, fig.width=7}
+#kallisto_genes <- kallisto %>% filter(!str_detect(ensembl_transcript_id,"ERCC|R1|R2")) %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric, sum, na.rm=TRUE) 
+spikes1 <- ggplot(gene_level_ratios, aes(x=GraphTube, y=ERCCvsEndo, fill=Tube, colour=Tube)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  scale_fill_manual(values=color_panel) +
+  scale_colour_manual(values=color_panel) +
+  theme_bar +
+  labs(x="", y="Endogenous/ERCC", title="relative RNA concentration", subtitle="endogenous RNA vs ERCC", col = NULL)
+ggsave("./plots/EndovsERCC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+spikes2 <- ggplot(gene_level_ratios, aes(x=GraphTube, y=EndovsERCC, fill=Tube, colour=Tube)) +
+  #geom_bar(stat="identity") +
+  geom_point(size=1.2) +
+  scale_fill_manual(values=color_panel) +
+  scale_colour_manual(values=color_panel) +
+  theme_bar +
+  labs(x="", y="endogenous/ERCC", title="relative RNA concentration", subtitle="Endogenous RNA vs ERCC", col = NULL, fill = NULL)
+ggplotly(spikes2)
+```
+
+```{r CONCENTRATION_part2, fig.height=5}
+#calculate statistics for endogenous/ERCC (sd, sem, 95% ci)
+test <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsERCC", groupvar=c("GraphTube"))
+# Plot ERCC/endo in log10 scale
+spikes_conc <- ggplot(test, aes(x=GraphTube, y=10^measurevar_log_resc)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=Tube), size=1.2) +
+  geom_point(data=test, aes(x=GraphTube, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="Relative endogenous RNA concentration", title="RNA concentration", subtitle="Endogenous RNA vs ERCC (rescaled)") +
+  scale_colour_manual(values=color_panel) +
+  scale_y_log10() +
+  theme_bar 
+#ggplotly(spikes_conc)
+
+tmp_summary <- gene_level_ratios %>% group_by(GraphTube) %>% dplyr::summarize(mean_EndovsERCC= mean(EndovsERCC), sd_EndovsERCC=sd(EndovsERCC)) %>% mutate(CV_EndovsERCC = sd_EndovsERCC/mean_EndovsERCC*100) %>% left_join(unique(dplyr::select(sample_annotation, c("Tube","GraphTube"))), by="GraphTube")
+
+p1 <- ggplot(gene_level_ratios, aes(x = EndovsERCC, y = EndovsSeq, col = Tube)) + 
+  geom_point()+geom_smooth(method = "lm", se = TRUE, aes(col = FALSE))+
+  theme_point + geom_abline(intercept=0, slope=1, color = "gray", linetype = "dashed")+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_color_manual(values=color_panel) +
+  scale_y_continuous(trans = "log2") + scale_x_continuous(trans = "log2") +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(x = "endogenous/ERCC", y = "endogenous/Sequin", title = "correlation of rel. RNA concentration in plasma (Sequin) and eluate (ERCC)", col = NULL) + 
+  stat_cor(method = "spearman", aes(col = FALSE, label=paste(..r.label.., cut(..p..,breaks = c(-Inf, 0.0001, 0.001, 0.01, 0.05, Inf), labels = c("'****'", "'***'", "'**'", "'*'", "'ns'")), sep = "~")))
+p1
+ggsave("./plots/SeqVsEndo_Spearman.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+p1 <- ggplot(test,aes(x=TimeLapse,y=10^measurevar_log_resc, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + 
+  scale_y_log10() +
+  labs(x="", y="relative endogenous RNA concentration", title="evolution of relative RNA concentration", subtitle="Endogenous RNA vs ERCC (rescaled to lowest)", col = "")
+
+ggplotly(p1)
+
+ggsave("./plots/ERCCVsEndo_linePlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+# Cut-off
+In order to remove genes with very few counts (and thus to improve repeatability between two replicates) we set a count cut-off at 6 counts. We based this cut-off on the results from exRNAQC004 (the RNA extraction kit study), where we had technical replicates for the combination of miRNeasy serum/plasma and EDTA tubes. Only the protein-coding genes that reach the cut-off are retained. 
+
+```{r}
+cutoff_kit <- data.frame(Tube = sample_annotation$Tube, GraphTube = sample_annotation$GraphTube, median_th = 6)
+```
+
+## Number of genes
+
+```{r apply cut-off}
+ensembl <- useEnsembl(biomart="ensembl",dataset="hsapiens_gene_ensembl", version = 91)
+genes_ens <- getBM(attributes=c('ensembl_gene_id','gene_biotype'),mart=ensembl)
+#genes_ens <- data.table::fread(paste0(data_path,"gene_biotypes_ensemblv91.txt"), header=T, data.table = F)
+
+kallisto_genes_long <- kallisto_genes %>% gather(., key="UniqueID", value="est_counts", -ensembl_gene_id) %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,GraphTube,SampleID, Tube, BiologicalReplicate, TimeLapse)), by="UniqueID") %>% #add kit column
+  left_join(., genes_ens, by="ensembl_gene_id") #add gene biotype
+
+#keep only protein coding genes with more than 0 counts
+kallisto_genes_long <- kallisto_genes_long %>% filter(est_counts > 0) %>% 
+  filter(gene_biotype=="protein_coding")
+
+
+number_genes_detected <- kallisto_genes_long %>% group_by(SampleID) %>% dplyr::summarize(genes_above0=n()) 
+number_genes_detected <- full_join(number_genes_detected, 
+                                   kallisto_genes_long %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_above0=sum(est_counts)), 
+                                   by="SampleID")
+
+
+#cutoff_kit <- single_pos %>% group_by(GraphTube) %>% dplyr::summarise(median_th = median(filter_threshold))
+
+kallisto_genes_cutoff <- kallisto_genes %>% gather(., key="UniqueID", value="est_counts", -ensembl_gene_id) %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,GraphTube,SampleID, Tube, BiologicalReplicate, TimeLapse)), by="UniqueID") %>% #add kit column
+  left_join(., genes_ens, by="ensembl_gene_id") #%>% #add gene biotype
+  #left_join(., cutoff_kit, by="GraphTube") #add the median cut-off for each kit
+
+kallisto_genes_cutoff <- kallisto_genes_cutoff %>% 
+  filter(est_counts > 6) %>% 
+  filter(gene_biotype=="protein_coding")
+
+number_genes_detected <- full_join(number_genes_detected, 
+                                   kallisto_genes_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(genes_aboveTh=n()),
+                                   by="SampleID")
+number_genes_detected <- full_join(number_genes_detected, 
+                                   kallisto_genes_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_aboveTh=sum(est_counts)), 
+                                   by="SampleID")
+
+number_genes_detected <- left_join(number_genes_detected, 
+                                   dplyr::select(sample_annotation, c(UniqueID, GraphTube, RNAisolation, EluateV,SampleID, Tube, BiologicalReplicate, TimeLapse)),
+                                   by="SampleID")
+#convert to the original format
+kallisto_genes_cutoff <- dplyr::select(kallisto_genes_cutoff, ensembl_gene_id, UniqueID, est_counts, Tube, BiologicalReplicate, TimeLapse) %>% 
+  spread(., key=UniqueID, value=est_counts)
+
+#write.csv(kallisto_genes_cutoff, file="../../../exRNAQC/kallisto_genes_cutoff.csv",row.names=FALSE, na="")
+```
+
+
+```{r plots_genes-depth_unfiltered, echo=FALSE, fig.height=5, fig.width=8}
+######keep only plots!
+
+p1 <- ggplot(number_genes_detected,aes(x=GraphTube,y=genes_above0, col=Tube))+
+  geom_point() +
+  theme_point+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  labs(x="", y="# protein coding genes",title="absolute number of protein coding genes (unfiltered)", col = NULL) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+#p1
+
+  #facet_wrap(~GraphTube, nrow = 1)
+#calculate statistics for ERCC/endogenous (sd, sem, 95% ci)
+test <- log_rescaling_CI(number_genes_detected, measurevar="genes_above0", groupvar="GraphTube",conf=0.95, log_base=10)
+#test
+#print(test %>% group_by(GraphTube) %>% filter(row_number() == 1), n=Inf, width=Inf)
+p2 <- ggplot(test, aes(x=GraphTube, y=mean_oriscale, colour=Tube)) + 
+  geom_point() +  
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), width=.1) +
+  geom_line() +
+  labs(x="", y="relative # protein coding genes",title="relative number of protein coding genes (unfiltered)", col = NULL) +
+  scale_colour_manual(values=color_panel) +
+  scale_y_continuous(limits=c(0,NA)) +
+  theme_point +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+#grid_arrange_shared_legend(p1,p2)
+```
+
+```{r plots_genes-depth_filtered, echo=FALSE}
+p3 <- ggplot(number_genes_detected,aes(x=GraphTube,y=genes_aboveTh, col=Tube))+
+  geom_point() +
+  theme_point+
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  labs(x="", y="# protein coding genes",title="absolute number of protein coding genes (filtered)", col = NULL) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+#p3
+  #facet_wrap(~GraphTube, nrow = 1)
+
+#calculate statistics for ERCC/endogenous (sd, sem, 95% ci)
+test <- log_rescaling_CI(number_genes_detected, measurevar="genes_aboveTh", groupvar="GraphTube",conf=0.95, log_base=10)
+#print(test %>% group_by(GraphTube) %>% filter(row_number() == 1), n=Inf, width=Inf)
+p4 <- ggplot(test, aes(x=GraphTube, y=mean_oriscale, colour=Tube)) + 
+  geom_point() +  
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), width=.1) +
+  geom_line() +
+  labs(x="", y="relative # protein coding genes",title="relative number of protein coding genes (filtered)", col = NULL) +
+  scale_colour_manual(values=color_panel) +
+  scale_y_continuous(limits=c(0,NA)) +
+  theme_point +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
+#grid_arrange_shared_legend(p3,p4)
+```
+
+There is a substantial drop in number of genes after applying the cut-off. For example, the RNA Streck tube only has 300-500 genes left. 
+
+```{r, echo=FALSE, fig.height=5, fig.width=8, fig.align="center", fig.keep="last"}
+ggplotly(p1 + scale_y_continuous(limits=c(0,12000)))
+ggsave("./plots/GeneCount_unfiltered.pdf", plot = ggplot2::last_plot() + scale_y_continuous(limits=c(0,12000)), dpi = 300)
+ggplotly(p3 + scale_y_continuous(limits=c(0,12000)))
+ggsave("./plots/GeneCount_filtered.pdf", plot = ggplot2::last_plot() + scale_y_continuous(limits=c(0,12000)), dpi = 300)
+
+p1 <- ggplot(number_genes_detected %>% filter(!is.na(GraphTube)),aes(x=TimeLapse,y=genes_aboveTh, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  labs(x="", y="# protein coding genes",title="absolute number of protein coding genes (filtered)", col = "")
+
+ggplotly(p1)
+geneCount_lineplot <- ggplot2::last_plot()
+ggsave("./plots/GeneCount_filtered_linePlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+tmp_summary <- number_genes_detected %>% group_by(GraphTube) %>% dplyr::summarize(mean_genes_aboveTh= mean(genes_aboveTh), sd_genes_aboveTh=sd(genes_aboveTh)) %>% mutate(CV_genes_aboveTh = sd_genes_aboveTh/mean_genes_aboveTh*100) %>% left_join(unique(dplyr::select(sample_annotation, c("Tube","GraphTube"))), by="GraphTube")
+```
+
+## Fold changes of number of genes
+We can observe again that the variability in the non-preservation tubes is lower compared to the preservation tubes. 
+
+```{r}
+FC <- generateFC(input_df = number_genes_detected, variable = "genes_aboveTh", dfName = "number of genes (filtered)")
+
+names(FC)[names(FC) == 'foldchange'] <- 'numbergenes_FC'
+
+FC_all <- merge(FC %>% select(-inputType), FC_all, on = c("Tube", "BiologicalReplicate", "ReplID", "Replicates"))
+
+ggsave("./plots/GeneCount_filtered_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+geneCount_FC_plot <- ggplot2::last_plot()
+```
+
+# Area left of the curve (ALC) {.tabset}
+- The ALC (area-left-of-curve) calculation is done according to (see Mestdagh et al., Nature Methods, 2014) and represents a precision metric:
+  1. Only genes that reach threshold (95% single positive (SP) elimination based on exRNAQC004) are taken into account.
+  2. All zero counts are replaced by NA
+  3. The log2 ratios of counts for each gene are determined, each time between 2 timepoints
+  4. Then, the absolute value of these log2 ratios are taken and ranked. This is plotted for every condition
+
+- The faster the curve reaches 100% -> the smaller the ALC -> the better (indicates that the replicates give similar counts for each gene)
+
+The ALC values are summarized based on the average of the ALC values (after reloving NAs). The dot plot at the end gives an overview of all these values.
+
+**Score: lower ALC = better**
+
+```{r, fig.height=2, fig.width=2, message=FALSE, warning=FALSE, echo=FALSE}
+double_positives<-kallisto_genes %>% dplyr::select(starts_with("RNA"),ensembl_gene_id) %>%
+  replace(., is.na(.),0) %>% #first change NAs to 0
+  mutate_if(is.numeric, funs(round)) #round everything to nearest integer
+ 
+double_positives<-double_positives[rowSums(double_positives %>% select_if(is.numeric) > 1, na.rm=T)>0,] # keep only the rows where at least one sample has more than 1
+ALC_input_all <- data.frame() 
+
+for (duplicate_type in unique(sample_annotation$Tube)){
+  sample_duplicates<-sample_annotation%>% filter(Tube==duplicate_type) %>%
+    dplyr::select(UniqueID,GraphTube,TimeLapse,Tube, BiologicalReplicate)
+  cutoff95SP <- cutoff_kit[cutoff_kit$Tube==duplicate_type,]$median_th
+  if(nrow(sample_duplicates)>1){
+    #print(duplicate_type)
+    double_positives_sample<-double_positives %>% dplyr::select(ensembl_gene_id,sample_duplicates$UniqueID) # only keep the replicates of one type
+   
+    samples_comb <- combn(sample_duplicates$UniqueID,2) #compare 2 of the 3 samples at a time
+    for (n_col in 1:ncol(samples_comb)) {
+      #print(samples_comb[,n_col])
+      nr_runA <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$TimeLapse)
+      nr_runB <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$TimeLapse)
+      RepA <- sample_annotation[sample_annotation$UniqueID== samples_comb[1,n_col],]$BiologicalReplicate
+      RepB <- sample_annotation[sample_annotation$UniqueID== samples_comb[2,n_col],]$BiologicalReplicate
+
+     if ((RepA == RepB)){
+      varname <- paste0("Rep",nr_runA,"_",nr_runB) #make a name so you can backtrace which replicates are compared
+      #print(varname)
+      double_positives_2repl <- double_positives %>% dplyr::select(ensembl_gene_id, paste(samples_comb[1,n_col]), paste0(samples_comb[2,n_col])) %>%
+        filter_if(is.numeric, all_vars(.>0)) %>% #keep only the 2 replicates of one kit and keep only genes where both replicates have > 0 counts
+        filter_if(is.numeric, any_vars(.>cutoff95SP)) # remove genes where neither of the replicates reach the threshold that removes 95% of SP in that kit
+      correlation_samples<-double_positives_2repl %>%
+        mutate(log2_ratio=abs(log(get(samples_comb[1,n_col]),2)-log(get(samples_comb[2,n_col]),2))) %>%
+        dplyr::select(log2_ratio,ensembl_gene_id) #%>% drop_na()
+      ALC_input<-correlation_samples %>% arrange(log2_ratio) %>% # order by log2 ratio and then make a rank (counter) and rescale this to 1 (perc_counter)
+        #mutate(rank=percent_rank(log2_ratio)) %>% # this does not work: gives everything with log2ratio = 0 rank 0
+        mutate(counter = seq(1:nrow(double_positives_2repl)), Tube=duplicate_type, Replicates=varname, BiologicalReplicate = paste0(RepA,"-",RepB)) %>%
+        mutate(ReplID = paste0(Tube,"-",Replicates), perc_counter = counter/nrow(double_positives_2repl))
+     
+      ALC_input_all <- rbind(ALC_input_all, ALC_input)
+      }
+    }
+  }
+}
+
+max_ALC <-max(ALC_input_all$log2_ratio) # calculate the max ALC over everything (necessary for area calculation -> should always be the same in order to compare among kits)
+ALC <- ALC_input_all %>% dplyr::group_by(Tube,Replicates,BiologicalReplicate) %>%
+  dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC*length(ensembl_gene_id))) %>%
+  #dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC)) %>%
+  mutate(ReplID = paste0(Tube,"-",Replicates))
+
+```
+
+## ALC (no 0's and 1 > cut-off) summary
+```{r, fig.align="center"}
+#print(all_plot + labs(title="Pairwise ALCs"))
+ 
+ALC_melt <- left_join(ALC, sample_annotation[,c("Tube")], by="Tube")
+ALC$BiologicalReplicate <- gsub("[-]TUBE[0-9]*","", ALC$BiologicalReplicate)
+ALC$Replicates <- gsub("^Rep04_0$","T0_04", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_04$","T0_04", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep16_0$","T0_16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_16$","T0_16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep16_04$","T04_16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep04_16$","T04_16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep24_0$","T0_24", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_24$","T0_24", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep72_0$","T0_72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_72$","T0_72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep72_24$","T24_72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep24_72$","T24_72", ALC$Replicates)
+#ALC_melt <- ALC_melt %>% filter(Replicates %in% c("Rep0_04", "Rep04_16", "Rep0_16", "Rep0_24", "Rep24_72", "Rep0_72"))
+
+ALC$TimePoint <- ifelse(ALC$Replicates %in% c("T24_0", "T0_24", "T0_04", "T04_0"), "1st timepoint", ifelse(ALC$Replicates%in% c("T72_0", "T0_72", "T0_16", "T16_0"), "2nd timepoint", NA))
+ALC$TubeType <- ifelse(ALC$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "Preservation", "Non-preservation")
+
+p1 <- ggplot(ALC %>% filter(!is.na(TimePoint)), aes(x=reorder(Tube,ALC_calc, FUN = function(x) -mean(x, na.rm = TRUE)), y = 2^ALC_calc)) + geom_boxplot() + geom_beeswarm(groupOnX=TRUE, size = 2.5, aes(col = TimePoint, shape = TubeType)) + geom_hline(yintercept = 1, linetype = "dashed", color = "gray") + labs(subtitle = "ordered by mean", title = "pairwise ALCs (both > 0, at least 1 > cut-off)", y = "linear ALC", x = "tube", col = "comparison", shape = "tube type") +
+  scale_fill_manual(values=color_panel) + theme_point + theme(axis.text.x = element_text(angle = 90)) +
+  stat_summary(
+    geom = "point",
+    fun.y = "mean",
+    col = "black",
+    size = 3,
+    shape = 24,
+    fill = "white"
+  )
+
+p1
+ggsave("./plots/ALC_dotPlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+ALC_FC_plot <- ggplot2::last_plot()
+
+p1 <- ggplot(ALC,aes(x=Replicates,y=ALC_calc, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  labs(y="ALC",title="pairwise ALCs (both > 0, at least 1 > cut-off)", subtitle="lower ALC = better", col = "", x = NULL)
+
+ggplotly(p1)
+
+ALC_lineplot <- ggplot2::last_plot()
+
+ggsave("./plots/ALC_linePlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+ALC_mean <- ALC %>% dplyr::group_by(Tube) %>% dplyr::summarise(ALC = mean(ALC_calc))
+```
+
+## Individual ALC plots
+```{r}
+for (replicates in unique(ALC_input_all$ReplID)) { 
+  for (techrep in c("DONOR1-DONOR1", "DONOR2-DONOR2", "DONOR3-DONOR3", "DONOR4-DONOR4", "DONOR5-DONOR5", "DONOR6-DONOR6", "DONOR7-DONOR7", "DONOR8-DONOR8", "DONOR9-DONOR9")){
+   # replicates = "DNA Streck-Rep24_0"     
+  #  techrep = "TUBE1-TUBE1" # plot the ALC (= the colored part of the plot)
+    tmp <- ALC_input_all %>% dplyr::filter(ReplID==replicates)  %>%
+                 dplyr::filter(BiologicalReplicate == techrep)
+    if (nrow(tmp) != 0){ 
+   print(ggplot( tmp %>%
+          mutate(log2_ratio_resc = log2_ratio/max_ALC))+
+        geom_line(aes(x=log2_ratio_resc,y=perc_counter))+
+        #facet_wrap(~ReplID) +
+        geom_ribbon(aes(x=log2_ratio_resc,ymin=perc_counter,ymax=1), fill="lightblue")+
+        geom_hline(aes(yintercept = 1))+
+        theme_classic()+
+        scale_x_continuous(limits=c(0,1)) +
+        scale_y_continuous(expand = c(0, 0)) +
+        theme(legend.position = "none") +
+        labs(title=paste0(replicates, " - ", techrep),
+             subtitle=paste("ALC:", round(ALC %>% ungroup() %>% dplyr::filter(ReplID==replicates)  %>%
+                 dplyr::filter(BiologicalReplicate == techrep) %>% select(ALC_calc),2)), #print ALC for this particular comparison!
+             y="rank percentile",x="rescaled log2 ratio"))
+    }
+  }
+}
+```
+
+# Gene biotype
+For every sample, we have plotted the percentage of counts and genes mapping to which biotypes. We expect that almost all genes that are detected are protein coding genes (as we apply an RNA exome capture-based method). Due to non-specific hybrid capture, also non-protein coding genes may be enriched. 
+
+```{r Biotype Annotation, warning=FALSE, message=FALSE}
+genes_ens <- getBM(attributes=c('ensembl_gene_id','hgnc_symbol','gene_biotype','chromosome_name'),mart=ensembl)
+
+genes_ens$gene_biotype[grep("protein coding",genes_ens$gene_biotype)]<-"protein coding"
+genes_ens$gene_biotype[grep("pseudogene",genes_ens$gene_biotype)]<-"pseudogene"
+genes_ens$gene_biotype[grep("TR",genes_ens$gene_biotype)]<-"other"
+genes_ens$gene_biotype[grep("IG",genes_ens$gene_biotype)]<-"other"
+genes_ens$gene_biotype[grep("TEC",genes_ens$gene_biotype)]<-"other"
+genes_ens$gene_biotype[grep("^sc",genes_ens$gene_biotype)]<-"other"
+genes_ens$gene_biotype[grep("ribozyme",genes_ens$gene_biotype)]<-"other"
+genes_ens$gene_biotype[grep("miRNA",genes_ens$gene_biotype)]<-"other"
+genes_ens$gene_biotype[grep("vault",genes_ens$gene_biotype)]<-"other"
+genes_ens$gene_biotype[grep("antisense_RNA",genes_ens$gene_biotype)]<-"lncRNA"
+genes_ens$gene_biotype[grep("lincRNA",genes_ens$gene_biotype)]<-"lncRNA"
+genes_ens$gene_biotype[grep("lncRNA",genes_ens$gene_biotype)]<-"lncRNA"
+genes_ens$gene_biotype[grep("overlapping",genes_ens$gene_biotype)]<-"lncRNA"
+genes_ens$gene_biotype[grep("^sense",genes_ens$gene_biotype)]<-"lncRNA"
+genes_ens$gene_biotype[grep("non_coding",genes_ens$gene_biotype)]<-"lncRNA"
+genes_ens$gene_biotype[grep("processed_transcript",genes_ens$gene_biotype)]<-"lncRNA"
+genes_ens$gene_biotype[grep("^s.*RNA$",genes_ens$gene_biotype)]<-"s(no)RNA"
+genes_ens$gene_biotype[grep("MT",genes_ens$chromosome_name)]<-"MT_gene"
+genes_ens$gene_biotype[grep("RNR",genes_ens$hgnc_symbol)]<-"MT_RNRgene"
+
+```
+
+
+```{r Add Annotation, warning=FALSE, message=FALSE}
+kallisto_genes_tpm <- left_join(kallisto_genes_tpm,genes_ens)
+kallisto_genes_tpm$gene_biotype[grep("45S",kallisto_genes_tpm$ensembl_gene_id)]<-"rRNA_45S"
+kallisto_genes_tpm$gene_biotype[is.na(kallisto_genes_tpm$gene_biotype)]<-"unknown"
+kallisto_genes_tpm$gene_biotype <- relevel(as.factor(kallisto_genes_tpm$gene_biotype) , 'protein_coding')
+
+kallisto_genes<-left_join(kallisto_genes,genes_ens)
+kallisto_genes$gene_biotype[grep("45S",kallisto_genes$ensembl_gene_id)]<-"rRNA_45S"
+kallisto_genes$gene_biotype[is.na(kallisto_genes$gene_biotype)]<-"unknown"
+
+kallisto_genes_cpm<-left_join(kallisto_genes_cpm,genes_ens)
+kallisto_genes_cpm$gene_biotype[grep("45S",kallisto_genes_cpm$ensembl_gene_id)]<-"rRNA_45S"
+kallisto_genes_cpm$gene_biotype[is.na(kallisto_genes_cpm$gene_biotype)]<-"unknown"
+
+```
+
+
+## Biotype composition based on TPM
+If we look at the individual samples, we notice that there is a lot more variability in terms of composition in the preservation tubes, compared to the non-preservation tubes. 
+
+```{r,echo=TRUE, fig.width=8, fig.height=7}
+kallisto_genes_tpm_cumsum<-kallisto_genes_tpm %>% group_by(gene_biotype) %>% summarise_if(is.numeric,.funs=sum)
+kallisto_genes_tpm_cumsum<-melt(kallisto_genes_tpm_cumsum)
+kallisto_genes_tpm_cumsum<-left_join(kallisto_genes_tpm_cumsum %>% dplyr::rename(UniqueID = variable),sample_annotation)
+
+
+p1 <- ggplot(kallisto_genes_tpm_cumsum %>% filter(TubeType == "Preservation"),aes(x=SampleID,y=value,fill=gene_biotype))+
+  geom_bar(stat="identity",position = "fill")+
+  theme_bar+
+  facet_wrap(~Tube, nrow=1, scales="free_x") +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),axis.line.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_manual(values=c("#23496b","#5bb75b","#428bca","#e87810","#e35d6a","#ffbf00","#cc2028","#039748","pink","gray","darkgray")) +
+  labs(title="%TPM per biotype (preservation tubes)", y = "fraction", x = "", col = NULL, fill = NULL)
+
+ggplotly(p1)
+
+ggsave("./plots/Biotype_preservation_barPlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+
+p2 <- ggplot(kallisto_genes_tpm_cumsum %>% filter(TubeType == "Non-preservation"),aes(x=SampleID,y=value,fill=gene_biotype))+
+  geom_bar(stat="identity",position = "fill")+
+  theme_bar+
+  facet_wrap(~Tube, nrow=1, scales="free_x") +
+  theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),axis.line.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_y_continuous(expand=c(0,0))+
+  scale_fill_manual(values=c("#23496b","#5bb75b","#428bca","#e87810","#e35d6a","#ffbf00","#cc2028","#039748","pink","gray","darkgray")) +
+  labs(title="%TPM per biotype (non-preservation tubes)",  y = "fraction", x = "", col = NULL, fill = NULL)
+
+ggplotly(p2)
+
+ggsave("./plots/Biotype_nonPreservation_barPlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+## Fold changes of protein coding gene count fraction
+
+```{r}
+plot_percentage <- function(input_df, biotype){
+tmp <- input_df %>% dplyr::group_by(GraphTube) %>% dplyr::mutate(value_prct = value/sum(value))
+
+# Plot ERCC/endo in log10 scale
+prct <- ggplot(tmp %>% filter(gene_biotype == biotype), aes(x=GraphTube, y=value_prct*100)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_point(aes(colour=Tube), size=1.2) +
+  #geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+
+  scale_colour_manual(values=color_panel) +
+  #scale_y_log10() +
+  theme_bar 
+ggplotly(prct)}
+
+plot_percentage_evolution <- function(input_df, biotype){
+tmp <- input_df %>% dplyr::group_by(GraphTube) %>% dplyr::mutate(value_prct = value/sum(value))
+
+p1 <- ggplot(tmp %>% filter(gene_biotype == biotype),aes(x=TimeLapse, y=value_prct*100, col=BiologicalReplicate, group = BiologicalReplicate))+
+  geom_point()+geom_line()+
+  theme_point+
+  facet_wrap(~Tube, ncol = 5, scales="free_x") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8)) +
+  scale_y_continuous(limits = c(0, NA))+
+  scale_color_manual(values=color_panel) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + 
+  labs(x="", col = "", y=paste0(biotype, " (% of total counts)"), title= paste0("evolution of ", biotype, " gene count fraction"))
+print(p1)
+
+return(tmp)
+}
+
+evoDf <- plot_percentage_evolution(kallisto_genes_tpm_cumsum, "protein_coding")
+ggsave("./plots/Biotype_evolution_proteincoding_linePlot.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+biotype_lineplot <- ggplot2::last_plot()
+
+FC <- generateFC(input_df = evoDf %>% filter(gene_biotype == "protein_coding"), variable = "value_prct", dfName = "protein coding gene count %")
+
+names(FC)[names(FC) == 'foldchange'] <- 'biotype_FC'
+
+FC_all <- merge(FC %>% select(-inputType), FC_all, on = c("Tube", "BiologicalReplicate", "ReplID", "Replicates"))
+
+ggsave("./plots/Biotype_evolution_proteincoding_FC.pdf", plot = ggplot2::last_plot(), dpi = 300)
+
+biotype_FC_plot <- ggplot2::last_plot()
+```
+
+
+```{r}
+
+tmp_summary <- kallisto_genes_tpm_cumsum %>% dplyr::group_by(GraphTube) %>% dplyr::mutate(value_prct = value/sum(value)) %>% ungroup() %>% dplyr::group_by(GraphTube, gene_biotype) %>% dplyr::summarize(mean_counts_prct= mean(value_prct), sd_counts_prct=sd(value_prct)) %>% mutate(CV_counts = sd_counts_prct/mean_counts_prct*100) %>% left_join(unique(dplyr::select(sample_annotation, c("Tube","GraphTube"))), by="GraphTube")
+```
+
+# Fold change summary of 5 performance metrics
+We can conclude, based on this data-analysis and these metrics, that the preservation tubes are too variable in terms of fold-changes to be of further use. They do not claim what they do: preservation of the content based on T0. The non-preservation tubes were not tested to T72, but these are also not marketed to do that. We chose 16 hours as latest realistic timepoint in a routine lab.
+
+For phase II of the exRNAQC study, we selected three tubes to proceed, i.e. EDTA, citrate and serum, based on their performance and availability in a routine hospital setting. 
+
+```{r}
+FC_all_means <- FC_all %>%  dplyr::group_by(Tube) %>% dplyr::summarise_all(funs(mean), na.rm = TRUE) %>% select(-c("BiologicalReplicate", "ReplID", "Replicates", "TimePoint", "TubeType"))
+ALC_mean$ALC <- 2^ALC_mean$ALC
+FC_all_means <- merge(ALC_mean, FC_all_means)
+
+FC_all_means <- FC_all_means %>% melt()
+FC_all_means$TubeType <- ifelse(FC_all_means$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+p1 <- ggplot(FC_all_means, aes(x = reorder(variable, value, FUN = function(x) -median(x, na.rm = TRUE)), y = value, group = Tube, color = Tube))+geom_vline(xintercept = c(1,2,3,4,5), linetype = "dashed", color = "grey") + geom_line() + geom_point() + theme_point + facet_wrap(~TubeType) + labs(title = "summary of fold changes", y = "mean FC", x = "metric", col = "tube") +  scale_color_manual(values=color_panel) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_x_discrete(labels=c("ALC_FC" = "ALC", "biotype_FC" = "biotype", "hemolysis_FC" = "hemolysis","numbergenes_FC" = "geneCount", "EndoVsSeq_FC" = "concRNA")) 
+
+ggplotly(p1)
+
+FC_all_means$TubeType <- gsub("P", "p", FC_all_means$TubeType )
+FC_all_means$TubeType <- gsub("N", "n", FC_all_means$TubeType )
+
+pub_p1 <- ggplot(FC_all_means, aes(x = reorder(variable, value, FUN = function(x) -median(x, na.rm = TRUE)), y = value, group = Tube, color = Tube))+geom_vline(xintercept = c(1,2,3,4,5), linetype = "dashed", color = "grey") + geom_line() + geom_point() + theme_point + facet_wrap(~TubeType) + labs(title = "summary of fold changes (mRNA)", y = "mean FC", x = NULL, col = NULL) +  scale_color_manual(values=color_panel) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_x_discrete(labels=c("ALC_FC" = "ALC", "biotype_FC" = "protein coding frac.", "hemolysis_FC" = "hemolysis","numbergenes_FC" = "number of genes", "EndoVsSeq_FC" = "RNA concentration")) 
+
+ggsave("./plots/FC_all_summary.pdf", plot = ggplot2::last_plot(), dpi = 300, height = 5, width = 8)
+ggsave("./plots/FC_all_summary.png", plot = ggplot2::last_plot(), dpi = 300, height = 5, width = 8)
+ggsave("./plots/FC_all_summary.svg", plot = ggplot2::last_plot(), dpi = 300, height = 5, width = 8)
+```
+
+
+```{r, fig.height=16, fig.width=10}
+figure_L <- ggarrange(
+  hemolysis_lineplot + labs(title = "hemolysis in PFP", col = NULL, x = ""), 
+  RNAconc_lineplot + labs(title = "ratio endogenous counts vs Sequin spike-in", col = NULL, y = "endogenous/Sequin"), 
+  geneCount_lineplot + labs(title = "absolute number of protein coding genes", col = NULL, y = "number of protein coding genes"), 
+  biotype_lineplot + labs(title = "evolution of protein coding gene count fraction", col = NULL, y = "protein coding counts / total counts * 100"), 
+  labels = c("A", "B", "C", "D", "E"),
+  common.legend = TRUE, legend = "bottom", ncol = 2, nrow = 2
+  )
+ggsave(figure_L, filename = "./plots/line_individ_overview.png", dpi = 300, height=12, width=12)
+ggsave(figure_L, filename = "./plots/line_individ_overview.pdf", dpi = 300, height=12, width=12)
+ggsave(figure_L, filename = "./plots/line_individ_overview.svg", dpi = 300, height=12, width=12)
+
+
+figure_R <- ggarrange(
+  hemolysis_FC_plot + labs(subtitle = NULL), 
+  RNAconc_FC_plot + labs(subtitle = NULL), 
+  geneCount_FC_plot + labs(subtitle = NULL), 
+  ALC_FC_plot + 
+        labs(subtitle = NULL, title = "area left of the curve", x = "tube") +
+        theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1)), 
+  biotype_FC_plot + 
+        labs(subtitle = NULL, title = "fold change of protein coding gene count percentage"), labels = c("A", "B", "C", "D", "E"),
+  common.legend = TRUE, legend = "bottom", ncol = 2, nrow = 3
+  )
+ggsave(figure_R, filename = "./plots/FC_individ_overview.png", dpi = 300, height=12, width=9)
+ggsave(figure_R, filename = "./plots/FC_individ_overview.pdf", dpi = 300, height=12, width=9)
+ggsave(figure_R, filename = "./plots/FC_individ_overview.svg", dpi = 300, height=12, width=9)
+```
+
+# Sessioninfo
+```{r}
+sessionInfo()
+```
