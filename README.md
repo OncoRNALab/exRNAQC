@@ -1,5 +1,7 @@
 # exRNAQC
 
+Quick access to HTML reports with results for each study: https://oncornalab.github.io/exRNAQC
+
 ## Full Length RNAseq
 ### Rationale
 Used for RNA access libraries, but with adaptations one can also use it for other library preps. Before starting the analysis you need to know if the data is stranded or unstranded and single or paired end sequenced. The latter, you will notice in the fastq files. If the strandedness is unsure, you can always load a STAR output file in IGV.
