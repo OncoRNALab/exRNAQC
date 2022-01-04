@@ -24,3 +24,5 @@ python CiLiQuant.py -b CIRCexplorer2_TopHat_clumpify/CIRCexplorer2_circRNAs.txt 
 
 The ```tail``` command removes the first line of the junctions.bed file which can be found in one of the circRNA output folders. The second command runs CiLiQuant using the generated circRNAs and junctions, as well as a BED file containing all the exons. 
 
+### Visualisation and statistical analysis
+We used R to generate the visualisations and perform statistical testing for changes in circRNA and linear RNA composition over time. You can find the analyses the accompanying HTML file.
