@@ -1,0 +1,679 @@
+---
+title: "Repeated measures analyses"
+output:
+  html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(nlme)
+library(ggplot2)
+library(multcomp)
+library(emmeans)
+library(rstatix)
+library(ggpubr)
+require(tidyverse)
+library(pheatmap)
+require(RColorBrewer)
+
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
+
+set.seed(189672)
+```
+
+# Introduction
+
+For every metric used to compare kit-tube combinations, we tested the possibility of interaction. We build a linear mixed-effects model with tube, RNA isolation kit and timelapse as fixed effects and donorID as random effect. The heteroscedasticity introduced by different RNAisolation kits was taken into account. 
+
+# Annotation
+
+Sample annotation with info about tube, kit, used input volume, eluate volume etc., volume unit is µL.
+
+```{r, warning=FALSE, message=FALSE}
+samples<-read_csv("./docs/Annotation_exRNAQC017_RNA-Exome_withHemolysis.csv")
+samples<-samples %>% mutate(donorID= case_when((Donor == "PNL-ZT37") ~ "D5",
+                                                                   (Donor == "PNL-RM7B") ~ "D1",
+                                                                   (Donor == "PNL-QJMM") ~ "D2",
+                                                                   (Donor == "PNL-2AAR") ~ "D3",
+                                                                   (Donor == "PNL-XNID") ~ "D4"), 
+                                                SampleID= paste0(GraphKit,"_",GraphTube,"_",TimeLapse,"_",donorID),
+                                                tube_kitID=paste0(GraphTube,"_",GraphKit),
+                                                tube_kit_timeID=paste0(GraphTube,"_",GraphKit,"_",TimeLapse),
+                                                PlasmaInputVml= PlasmaInputV/1000)
+
+DT::datatable(samples %>% dplyr::select(c("RNAID","donorID","RNAisolation","Tube","TimeLapse","PlasmaInputV","Sequinconc","EluateV","ERCCconc","RNAinputV", "Hemolysis",Abbrevation="GraphKit")), rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Sample annotation table")
+
+samples$Tube<-as.factor(samples$Tube)
+samples$RNAisolation<-as.factor(samples$RNAisolation)
+samples$TimeLapse<-as.factor(samples$TimeLapse)
+samples$donorID<-as.factor(samples$donorID)
+
+Tube.levels<-levels(samples$Tube)
+RNAisolation.levels<-levels(samples$RNAisolation)
+TimeLapse.levels<-levels(samples$TimeLapse)
+```
+
+# Sequencing and preprocessing
+
+## Reads
+
+```{r, warning=FALSE, message=FALSE}
+r_stat <- read.csv('./data_output/reads_melt_pre.csv',sep=",",header = TRUE)
+
+r_stat$Tube<-as.factor(r_stat$Tube)
+r_stat$RNAisolation<-as.factor(r_stat$RNAisolation)
+r_stat$TimeLapse<-as.factor(r_stat$TimeLapse)
+r_stat$donorID<-as.factor(r_stat$donorID)
+
+Tube.levels<-levels(r_stat$Tube)
+RNAisolation.levels<-levels(r_stat$RNAisolation)
+TimeLapse.levels<-levels(r_stat$TimeLapse)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+m1<-lme(reads~Tube*RNAisolation*TimeLapse,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=r_stat)
+
+anova(m1)
+anova_m1 <- round(anova(m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+Only RNAisolation kit has a significant effect, there are no interactions.
+
+The normality of the residuals is checked.
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(m1$residuals)
+qqline(m1$residuals)
+```
+
+## Kallisto alignment score
+
+```{r, warning=FALSE, message=FALSE}
+align_stat <- read.csv('./data_output/kallisto_aligned.csv',sep=",",header = TRUE)
+
+align_stat$Tube<-as.factor(align_stat$Tube)
+align_stat$RNAisolation<-as.factor(align_stat$RNAisolation)
+align_stat$TimeLapse<-as.factor(align_stat$TimeLapse)
+align_stat$donorID<-as.factor(align_stat$donorID)
+
+Tube.levels<-levels(align_stat$Tube)
+RNAisolation.levels<-levels(align_stat$RNAisolation)
+TimeLapse.levels<-levels(align_stat$TimeLapse)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+align_m1<-lme(percent_aligned~Tube*RNAisolation*TimeLapse,
+       random=~1|donorID,
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=align_stat)
+
+anova_align_m1 <- round(anova(align_m1)[c(5, 6, 7), c(4)], digits = 3) 
+anova(align_m1)
+```
+
+There seems to be an interaction between tube and RNA isolation kit. There is no third-order interaction with time.
+Next, we look at second-order interactions: 
+
+```{r, warning=FALSE, message=FALSE}
+align_m2<-lme(percent_aligned~(Tube+RNAisolation+TimeLapse)^2,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=align_stat)
+
+anova(align_m2)
+```
+
+Again, we see an interaction between tube and kit.
+Finally, we only include the tube-kit interaction in the model.
+
+```{r, warning=FALSE, message=FALSE}
+align_m3<-lme(percent_aligned~Tube+RNAisolation+TimeLapse+
+             Tube:RNAisolation,
+       random=~1|donorID,
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=align_stat)
+
+anova(align_m3)
+```
+
+The normality of the residuals is checked.
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(align_m3$residuals)
+qqline(align_m3$residuals)
+```
+
+For both RNA isolation methods, the effect of tube is investigated. The data is collapsed over time.
+
+```{r, warning=FALSE, message=FALSE}
+align_m.methods<-emmeans(align_m3, ~Tube|RNAisolation)
+plot(align_m.methods, comparisons=TRUE)
+```
+
+The arrows in the plot originate in the estimated marginal mean of that group, the length is an approximation of the margin of error if compared with the marginal mean of the closest other group. The arrow is one-sided if there is no other group with a smaller (to the left) or bigger (to the right) marginal mean to compare with. If the arrows of two groups overlap, it means that the margin of error is bigger than the difference. If there is no overlap, which we see in the serum tube group if extracted with the QIAamp kit, it means that the difference is bigger than the margin or error. Thus, there is a significant difference.
+
+```{r, warning=FALSE, message=FALSE}
+pairs(align_m.methods)
+confint(align_m.methods, adjust="mvt")
+```
+
+We can conclude that the alignment percentage is significantly lower in the serum tube compared to the other tubes, but only if extracted with the QIAamp kit.
+
+```{r}
+# ANOVA test between tubes of same kit
+align_stats <- align_stat %>% group_by(RNAisolation, Tube) %>% get_summary_stats(percent_aligned, type = "mean_sd")
+align_tube_effect <- align_stat %>% group_by(RNAisolation) %>% anova_test(percent_aligned ~ Tube)
+align_kit_effect <- align_stat %>% group_by(Tube) %>% anova_test(percent_aligned ~ RNAisolation)
+
+# Pairwise comparisons
+align_pwc <- align_stat %>% group_by(RNAisolation) %>% pairwise_t_test(percent_aligned ~ Tube) %>% add_xy_position(x = "Tube")
+align_pwc_time <- align_stat %>% group_by(RNAisolation, TimeLapse) %>% pairwise_t_test(percent_aligned ~ Tube) %>% add_xy_position(x = "Tube")
+
+# Show p-values
+ggplot(align_stat, aes(x = Tube, y = percent_aligned, color = Tube)) +
+  geom_boxplot() +
+  geom_point() +
+  scale_colour_manual(values=color_panel) +
+  facet_wrap(~ RNAisolation) +
+  stat_pvalue_manual(align_pwc, label = "p.signif") +
+  labs(title = "tube comparison within kits (T test)")
+#ggsave("./data_output/plots/duplicates_stats.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+## Duplicate rate
+
+```{r, warning=FALSE, message=FALSE}
+dupl_stat<-read.csv("./data_output/duplicates_complete.csv",sep=",",header = TRUE)
+
+dupl_stat$Tube<-as.factor(dupl_stat$Tube)
+dupl_stat$RNAisolation<-as.factor(dupl_stat$RNAisolation)
+dupl_stat$TimeLapse<-as.factor(dupl_stat$TimeLapse)
+dupl_stat$donorID<-as.factor(dupl_stat$donorID)
+
+Tube.levels<-levels(dupl_stat$Tube)
+RNAisolation.levels<-levels(dupl_stat$RNAisolation)
+TimeLapse.levels<-levels(dupl_stat$TimeLapse)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+#dupl_m <- aov(duplicates ~ RNAisolation*Tube*TimeLapse, dupl_stat)
+#summary(dupl_m)
+#dupl_m_RM <- aov(duplicates ~ RNAisolation*Tube*TimeLapse + Error(donorID), dupl_stat)
+#summary(dupl_m_RM)
+
+dupl_m1<-lme(duplicates~Tube*RNAisolation*TimeLapse,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=dupl_stat)
+
+anova_dupl_m1 <- round(anova(dupl_m1)[c(5, 6, 7), c(4)], digits = 3)
+anova(dupl_m1)
+```
+
+The model indicates that there are interaction effects with Tube. Thus the effect of RNA isolation method is not the same for all tubes, and the effect of time is not the same for all tubes. However, there is no significant third-order interaction.
+Next, we look at second-order interactions: 
+
+```{r, warning=FALSE, message=FALSE}
+dupl_m2<-lme(duplicates~(Tube+RNAisolation+TimeLapse)^2,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=dupl_stat)
+
+anova(dupl_m2)
+```
+
+Again, we see interaction effects with Tube.
+Finally, we only include the tube-kit and tube-time effect in the model.
+
+```{r, warning=FALSE, message=FALSE}
+dupl_m3<-lme(duplicates~Tube+RNAisolation+TimeLapse+
+             Tube:RNAisolation+Tube:TimeLapse,
+       random=~1|donorID,
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=dupl_stat)
+
+anova(dupl_m3)
+```
+
+A quick check of the normality of the residuals. There seem to be some deviation in the tails. However, the methods used here are quite robust against such deviations. 
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(dupl_m3$residuals)
+qqline(dupl_m3$residuals)
+```
+
+For all combinations of tube and RNA isolation method, the effect of time is investigated. Tukey's method for multiplicity correction is applied separately for each combination of tube and RNA isolation method. Hardly any significant time effects are detected. If multiple testing correction would have been applied to all test simultaneously, no significant results would have been left. 
+
+Note that this analysis is based on the method that includes all interaction terms, whereas a previous analysis has suggested that there is only evidence for interaction effects with tube. We believe it is still better to do this analysis under a less restrictive model (as we have done here).
+
+```{r, warning=FALSE, message=FALSE}
+dupl_m.time<-emmeans(dupl_m1, ~TimeLapse|Tube:RNAisolation)
+plot(dupl_m.time, comparisons=TRUE)
+pairs(dupl_m.time)
+confint(dupl_m.time,adjust="mvt")
+```
+
+Next we compare all methods (i.e. combination of tube and RNA isolation method) in a pairwise fashion, but for each time point separately. Again Tukey's multiple testing method is used, for each time point separately. 
+ 
+```{r, warning=FALSE, message=FALSE}
+dupl_m.methods<-emmeans(dupl_m1, ~Tube*RNAisolation|TimeLapse)
+plot(dupl_m.methods, comparisons=TRUE)
+pairs(dupl_m.methods)
+confint(dupl_m.methods, adjust="mvt")
+```
+
+Compare for each timepoint-kit combination separately
+
+```{r, warning=FALSE, message=FALSE}
+dupl_m.time_kit<-emmeans(dupl_m1, ~Tube|RNAisolation:TimeLapse )
+plot(dupl_m.time_kit, comparisons=TRUE)
+pairs(dupl_m.time_kit)
+confint(dupl_m.time_kit, adjust="mvt")
+```
+
+We can conclude there is a small tube-kit and tube-time interaction; the serum tube at timepoint 16h seems to have more duplicates when extracted with the QIAamp kit. However, the difference is negligible.
+
+```{r}
+# # tried to make heatmap for p-values but result is not ok; should be left out
+# m_dupl.methods<-emmeans(m_dupl, ~Tube*RNAisolation|TimeLapse )
+# plot(m_dupl.methods, comparisons=TRUE)
+# pairs(m_dupl.methods)
+# confint(m_dupl.methods, adjust="mvt")
+# 
+# # subset duplicates for T0
+# dupl_T0 <- subset(duplicates, TimeLapse == "T0")
+# m_dupl_T0 <-lme(duplicates~Tube*RNAisolation,
+#        random=~1|donorID,
+#        weights = varIdent(form = ~ 1 | RNAisolation),
+#        data=dupl_T0)
+# 
+# m_dupl_T0.methods<-emmeans(m_dupl_T0, ~Tube*RNAisolation)
+# 
+# # make heatmap of p-values for T0
+# m_dupl_T0pwp <- pwpm(m_dupl_T0.methods)
+# m_dupl_T0pwp <- sub("[<>]", "", m_dupl_T0pwp)
+# p_dupl_T0.matx<-matrix(as.numeric((m_dupl_T0pwp)),nrow = length(m_dupl_T0pwp[,1]),ncol = length(m_dupl_T0pwp[,1]))
+# rownames(p_dupl_T0.matx) <- colnames(p_dupl_T0.matx) <- rownames(m_dupl_T0pwp)
+# #p_dupl_T0.matx[lower.tri(p_dupl_T0.matx, diag=TRUE)] <- NA
+# #melt(p_dupl_T0.matx) %>%
+# #  ggplot(aes(Var1, Var2, fill = value)) + geom_tile() +
+# #  geom_text(aes(label = value))
+# 
+# allcolors = colorRampPalette(brewer.pal(8,"Blues"))(100)
+# colorscale = c(allcolors,allcolors)
+# 
+# corrplot(p_dupl_T0.matx, method = 'shade', type = 'upper',
+#          diag = FALSE,
+#          tl.srt = 45, #text labels rotated 45 degrees
+#          number.cex=0.8, 
+#          addCoef.col = "black", # Add p-value
+#          tl.col = "black", #text label color
+#          tl.cex = 0.8,
+#          col=colorscale)
+```
+
+# RNA concentration
+
+## Relative RNA conc in plasma: endogenous RNA vs Sequins
+```{r, warning=FALSE, message=FALSE}
+conc_stat <- read.csv("./data_output/gene_level_ratios.csv",sep=",",header = TRUE)
+
+conc_stat$Tube<-as.factor(conc_stat$Tube)
+conc_stat$RNAisolation<-as.factor(conc_stat$RNAisolation)
+conc_stat$TimeLapse<-as.factor(conc_stat$TimeLapse)
+conc_stat$donorID<-as.factor(conc_stat$donorID)
+conc_stat <- conc_stat %>%
+  mutate("EndovsERCC_InputCorr"= (endogenous/ERCC)*EluateV/PlasmaInputV,
+         "SeqvsERCC_InputCorr" = (Sequin/ERCC)*EluateV/PlasmaInputV)
+
+Tube.levels<-levels(conc_stat$Tube)
+RNAisolation.levels<-levels(conc_stat$RNAisolation)
+TimeLapse.levels<-levels(conc_stat$TimeLapse)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsSeq_m1<-lme(EndovsSeq~Tube*RNAisolation*TimeLapse,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsSeq_m1)
+anova_EndovsSeq_m1 <- round(anova(EndovsSeq_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+The model indicates that the effect of time is not the same for all tubes. There is no significant third-order interaction.
+
+Next, we look at second-order interactions:
+
+```{r, warning=FALSE, message=FALSE}
+EndovsSeq_m2<-lme(EndovsSeq~(Tube+RNAisolation+TimeLapse)^2,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsSeq_m2)
+```
+
+Again, we see a tube-time interaction.
+Finally, we only include the tube-time effect in the model.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsSeq_m3<-lme(EndovsSeq~Tube+RNAisolation+TimeLapse+
+             Tube:TimeLapse,
+       random=~1|donorID,
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsSeq_m3)
+```
+
+The normality of the residuals is checked.
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(EndovsSeq_m3$residuals)
+qqline(EndovsSeq_m3$residuals)
+```
+
+For all tubes, the effect of time is investigated. The data is collapsed over RNA isolation method.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsSeq_m.time<-emmeans(EndovsSeq_m3, ~TimeLapse|Tube)
+plot(EndovsSeq_m.time, comparisons=TRUE)
+pairs(EndovsSeq_m.time)
+confint(EndovsSeq_m.time,adjust="mvt")
+```
+
+At timepoint 16h, we see a significantly higher endogenous/Sequin ratio in EDTA compared to other tubes.
+
+## Relative RNA concentration in eluate: Endogenous vs ERCC
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_m1<-lme(EndovsERCC~Tube*RNAisolation*TimeLapse,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsERCC_m1)
+```
+
+Borderline significant tube-time interaction. There is no third-order interaction with RNA isolation kit.
+Next, we look at second-order interactions:
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_m2<-lme(EndovsERCC~(Tube+RNAisolation+TimeLapse)^2,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsERCC_m2)
+```
+
+Finally, we only include the tube-time interaction in the model.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_m3<-lme(EndovsERCC~Tube+RNAisolation+TimeLapse+
+                     Tube:TimeLapse,
+       random=~1|donorID,
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsERCC_m3)
+```
+
+The normality of the residuals is checked.
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(EndovsERCC_m3$residuals)
+qqline(EndovsERCC_m3$residuals)
+```
+
+For all tubes, the effect of time is investigated. The data is collapsed over RNA isolation method.  
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_m.time<-emmeans(EndovsERCC_m3, ~TimeLapse|Tube)
+plot(EndovsERCC_m.time, comparisons=TRUE)
+pairs(EndovsERCC_m.time)
+confint(EndovsERCC_m.time,adjust="mvt")
+```
+
+The higher endogenous/ERCC ratio in EDTA at timepoint 16h is hardly significant.
+
+## RNA extraction efficiency
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_InputCorr_m1<-lme(EndovsERCC_InputCorr~Tube*RNAisolation*TimeLapse,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsERCC_InputCorr_m1)
+anova_EndovsERCC_InputCorr_m1 <- round(anova(EndovsERCC_InputCorr_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+The model indicates a significant tube-time interaction. There is no third-order interaction with RNA isolation kit.
+Next, we look at second-order interactions:
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_InputCorr_m2<-lme(EndovsERCC_InputCorr~(Tube+RNAisolation+TimeLapse)^2,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsERCC_InputCorr_m2)
+```
+
+Again, we see a significant tube-time interaction.
+Finally, we only include the tube-time interaction in the model.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_InputCorr_m3<-lme(EndovsERCC_InputCorr~Tube+RNAisolation+TimeLapse+
+             Tube:TimeLapse,
+       random=~1|donorID,
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=conc_stat)
+
+anova(EndovsERCC_InputCorr_m3)
+```
+
+Check of normality of the residuals.
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(EndovsERCC_InputCorr_m3$residuals)
+qqline(EndovsERCC_InputCorr_m3$residuals)
+```
+
+For all tubes, the effect of time is investigated. The data is collapsed over RNA isolation method.
+
+```{r, warning=FALSE, message=FALSE}
+EndovsERCC_InputCorr_m.time<-emmeans(EndovsERCC_InputCorr_m3, ~TimeLapse|Tube)
+plot(EndovsERCC_InputCorr_m.time, comparisons=TRUE)
+pairs(EndovsERCC_InputCorr_m.time)
+confint(EndovsERCC_InputCorr_m.time,adjust="mvt")
+```
+
+Both in the EDTA en citrate tubes there seems to be a significantly higher extraction efficiency at timepoint 16h.
+
+# Gene count
+
+## absolute numbers
+```{r, warning=FALSE, message=FALSE}
+gene_stat <- read.csv('./data_output/number_genes_detected.csv',sep=",",header = TRUE)
+
+gene_stat$Tube<-as.factor(gene_stat$Tube)
+gene_stat$RNAisolation<-as.factor(gene_stat$RNAisolation)
+gene_stat$TimeLapse<-as.factor(gene_stat$TimeLapse)
+gene_stat$donorID<-as.factor(gene_stat$donorID)
+
+Tube.levels<-levels(gene_stat$Tube)
+RNAisolation.levels<-levels(gene_stat$RNAisolation)
+TimeLapse.levels<-levels(gene_stat$TimeLapse)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+count_m1<-lme(genes_aboveTh~Tube*RNAisolation*TimeLapse,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=gene_stat)
+
+anova(count_m1)
+anova_count_m1 <- round(anova(count_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+There seems to be a significant tube-RNA isolation kit interaction. There is no third-order interaction with
+time.
+Next, we look at second-order interactions:
+
+```{r, warning=FALSE, message=FALSE}
+count_m2<-lme(genes_aboveTh~(Tube+RNAisolation+TimeLapse)^2,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=gene_stat)
+
+anova(count_m2)
+```
+
+Finally, we only include the tube-kit interaction in the model.
+
+```{r, warning=FALSE, message=FALSE}
+count_m3<-lme(genes_aboveTh~Tube+RNAisolation+TimeLapse+
+             Tube:RNAisolation,
+       random=~1|donorID,
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=gene_stat)
+
+anova(count_m3)
+```
+
+Check of normality of the residuals.
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(count_m3$residuals)
+qqline(count_m3$residuals)
+```
+
+For both RNA isolation methods, the effect of tube is investigated. The data is collapsed over time.
+
+```{r, warning=FALSE, message=FALSE}
+count_m.methods<-emmeans(count_m3, ~Tube|RNAisolation)
+plot(count_m.methods, comparisons=TRUE)
+pairs(count_m.methods)
+confint(count_m.methods, adjust="mvt")
+```
+
+Serum has a significantly lower absolute count of protein-coding genes, but only if extracted with the QIAamp kit.
+
+Pairwise T-test within kits
+
+```{r, warning=FALSE, message=FALSE}
+# Pairwise comparisons
+gene_pwc <- gene_stat %>% group_by(RNAisolation) %>% pairwise_t_test(genes_aboveTh ~ Tube) %>% add_xy_position(x = "Tube")
+
+# Show p-values
+ggplot(gene_stat, aes(x = Tube, y = genes_aboveTh, color = Tube)) +
+  geom_boxplot()+
+  geom_point()+
+  scale_colour_manual(values=color_panel)+
+  facet_wrap(~ RNAisolation) +
+  stat_pvalue_manual(gene_pwc, label = "p.signif") +
+  labs(title = "tube comparison within kits (T test)", y = "absolute count of genes above threshold")
+#ggsave("./data_output/plots/duplicates_stats.pdf", plot = ggplot2::last_plot(), dpi = 300)
+```
+
+# Area left of the curve (ALC)
+
+```{r, warning=FALSE, message=FALSE}
+ALC <- read.csv('./data_output/ALC.csv',sep=",",header = TRUE)
+
+ALC[c("Tube","RNAisolation")] <- str_split_fixed(ALC$tube_kitID, "_", 2)
+ALC$Tube <- as.factor(ALC$Tube)
+ALC$RNAisolation <- as.factor(ALC$RNAisolation)
+ALC$TimePoint <- as.factor(ALC$TimePoint)
+ALC$BiologicalReplicate <- as.factor(ALC$BiologicalReplicate)
+ALC <- na.omit(ALC)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r, warning=FALSE, message=FALSE}
+ALC_m1<-lme(ALC_calc~Tube*RNAisolation*TimePoint,
+       random=~1|BiologicalReplicate, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=ALC)
+
+anova(ALC_m1)
+anova_ALC_m1 <- round(anova(ALC_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+Next, we look at second-order interactions:
+
+```{r, warning=FALSE, message=FALSE}
+ALC_m2<-lme(ALC_calc~(Tube+RNAisolation+TimePoint)^2,
+       random=~1|BiologicalReplicate, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=ALC)
+
+anova(ALC_m2)
+```
+
+There are no significant interactions.
+
+Check of normality of the residuals.
+
+```{r, warning=FALSE, message=FALSE}
+qqnorm(ALC_m1$residuals)
+qqline(ALC_m1$residuals)
+```
+
+# conclusion
+
+For duplicates and gene count, we see a tube-kit interaction. For both metrics the serum tube combined with the QIAamp extraction kit seems to perform worse than the other combinations. For RNA concentration and extraction efficiency, there seems to be a tube-time interaction. The EDTA tube at timepoint 16h performs significantly better than other combinations. In case of Extraction efficiency, this is also the case with the citrate tube.
+
+```{r, warning=FALSE, message=FALSE}
+overview <- data.frame(row.names = c("Tube:RNAisolation","Tube:TimeLapse","RNAisolation:TimeLapse"), "duplicates"= anova_dupl_m1, "RNA conc (endoVSseq)" = anova_EndovsSeq_m1, "extraction efficiency" = anova_EndovsERCC_InputCorr_m1, "gene count" = anova_count_m1, "ALC" = anova_ALC_m1, check.names = FALSE)
+overview_t <- t(overview)
+# add row with which interaction was significant
+#significant <- data.frame("None","Serum-QIAamp","None","None","None","None", row.names = "significant")
+#names(significant) <- names(overview)
+#overview <- rbind(overview, significant)
+# table
+#DT::datatable(overview) %>%
+#  DT::formatStyle(3, target = "row") #fontWeight = styleEqual(3, "bold")
+# heatmap
+## apply different color for p < 0.05
+bk1 <- c(seq(0,0.04,by=0.01),0.049)
+bk2 <- c(seq(0.05,1,by=0.1))
+bk <- c(bk1,bk2)
+custom_palette <- c(colorRampPalette(colors = c("#F4A582"))(length(bk1)-1), colorRampPalette(colors = c('#F7F7F7'))(length(bk2)-1))
+pheatmap::pheatmap(overview_t,
+                   breaks = bk,
+                   display_numbers = T,
+                   color = custom_palette,
+                   angle_col = 45,
+                   cluster_rows=FALSE, cluster_cols=FALSE)
+```
+
+
