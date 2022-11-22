@@ -1,0 +1,859 @@
+---
+title: 'repeated measures analyses for small RNA'
+author: "Franco Poma - on behalf of exRNAQC consortium"
+date: "12/10/2022"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: kate
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    latex_engine: lualatex
+    pandoc_args: --listings
+    toc: yes
+subtitle: "Subsampled to 700 000"
+---
+
+```{r, message=FALSE, warning=FALSE}
+require(nlme)
+require(reshape2)
+require(ggplot2)
+require(multcomp)
+require(emmeans)
+require(rstatix)
+require(ggpubr)
+require(RColorBrewer)
+require(tidyverse)
+require(dplyr)
+require(ggbeeswarm)
+require(readxl)
+require(broom)
+require(scales)
+require(RCurl)
+require(plotly)
+require(ggrepel)
+require(gridExtra)
+require(ggExtra)
+require(DT)
+source("./HelperFunctions.R")
+
+
+theme_point<-theme_bw()+theme(strip.background = element_blank())
+theme_bar<-theme_bw()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.line.x = element_blank())
+theme_boxplot<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank(),axis.line.x = element_blank(),legend.position = "none")
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","darkgray")
+names(color_panel)<-sort(c("serum","Biomatrica","EDTA separator","EDTA","Citrate","RNA Streck","Roche","DNA Streck", "PAXgene", "ACD-A"))
+set.seed(1)
+```
+
+#Introduction
+
+For every metric used to compare kit-tube combinations, we tested the possibility of interaction. We build a linear mixed-effects model with tube, RNA isolation kit and timelapse as fixed effects and donorID as random effect. 
+
+# Annotation
+
+Sample annotation with info about tube, kit, used input volume, eluate volume etc., volume unit is µL
+
+```{r, message=FALSE, warning=FALSE}
+#Annotation
+sample_annotation<-read_tsv("./Annotation_exRNAQC017.csv")
+colnames(sample_annotation)[23]<-'TimeInterval' 
+sample_annotation<-sample_annotation %>% mutate(donorID= case_when((Donor == "PNL-XNID") ~ "D5",
+                                                                   (Donor == "PNL-7DEN") ~ "D1",
+                                                                   (Donor == "PNL-8ZI1") ~ "D2",
+                                                                   (Donor == "PNL-NLID") ~ "D3",
+                                                                   (Donor == "PNL-UCH7") ~ "D4"), 
+                                                SampleID= paste0(GraphKit,"_",GraphTube,"_",TimeInterval,"_",donorID),
+                                                tube_kitID=paste0(GraphTube,"_",GraphKit),
+                                                tube_kit_timeID=paste0(GraphTube,"_",GraphKit,"_",TimeInterval),
+                                                PlasmaInputVml= PlasmaInputV/1000)
+    
+sample_annotation$Tube<-as.factor(sample_annotation$Tube)
+sample_annotation$RNAisolation<-as.factor(sample_annotation$RNAisolation)
+sample_annotation$TimeInterval<-as.factor(sample_annotation$TimeInterval)
+sample_annotation$donorID<-as.factor(sample_annotation$donorID)
+
+#Reads
+miRNAs <- data.table::fread("mergedTxts/allmiRs_subs.txt", header=T, data.table = F)
+spikes <- data.table::fread("mergedTxts/allspikes_subs.txt", header=T, data.table = F)
+reads <- data.table::fread("mergedTxts/allreads_subs.txt", header=T, data.table = F)
+contam <- data.table::fread("mergedTxts/allcontam_subs.txt", header=T, data.table = F)
+
+reads_total<- read_tsv("./smallRNA_table.tsv")
+reads_total <- full_join(reads_total, sample_annotation, by = "RNAID")
+
+Tube.levels<-levels(reads_total$Tube)
+RNAisolation.levels<-levels(reads_total$RNAisolation)
+TimeInterval.levels<-levels(reads_total$TimeInterval)
+
+#ggplot(reads_total, aes(x = TimeInterval, y = total_reads, group = donorID:RNAisolation)) +
+#  geom_line(aes(color=RNAisolation))+geom_point() + facet_grid(. ~ Tube) + labs(title = "Raw Number of Reads")
+
+spikes_sum <- spikes %>% gather(key="UniqueID",value="spikecounts",-"spikeID") %>% 
+  group_by(UniqueID) %>% dplyr::summarise(counts=sum(spikecounts, na.rm=T)) %>%
+  #spread(key=UniqueID,value=spikesum) %>% 
+  mutate(reads="spikes")
+
+# add sum of spikes to the total mapped reads (these were not considered as "mapped" yet)
+reads_complete <- reads %>% gather(key="UniqueID",value="counts",-"reads") %>% 
+  rbind(., spikes_sum) %>%
+  spread(key=reads, value=counts) %>% 
+  mutate(all_mapped = mapped + spikes) %>% 
+  gather(key="reads",value="counts",-"UniqueID")
+
+DT::datatable(sample_annotation %>% dplyr::select(c("RNAID","RNAisolation","PlasmaInputV","donorID","Tube","TimeInterval","Sequinconc","ERCCconc",Abbrevation="GraphKit")), rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Sample annotation table")
+```
+
+# RNA concentration
+
+## Endogenous vs LP spikes: relative small RNA concentration in eluate
+
+calculation: count mapped miRNAS / count mapped LP spikes
+
+```{r, message=FALSE, warning=FALSE}
+gene_level_ratios <- rbind(
+  reads %>% 
+  filter(reads=="mapped_miR") %>%
+  mutate(type="endogenous") %>%
+    group_by(type) %>%
+    dplyr::summarise_if(is.numeric, sum, na.rm=TRUE),spikes %>%
+    mutate(type=gsub(".-..$","",spikeID)) %>%
+    group_by(type) %>%
+    dplyr::summarise_if(is.numeric, sum, na.rm=TRUE)
+  ) %>%
+  gather(., key="UniqueID",value="counts",-type) %>%  #long format
+  spread(., key = "type", value="counts") %>%
+  mutate("LPvsEndo"=LP/endogenous, "RCvsEndo"=RC/endogenous, "EndovsRC"=endogenous/RC, "EndovsLP"= endogenous/LP) %>%
+  left_join(., sample_annotation %>%
+              dplyr::select(c("UniqueID","RNAID","RNAisolation","Tube","SampleID","GraphTube","EluateV","PlasmaInputV", "BiologicalReplicate", "TimeInterval","Donor", "donorID")), by=c("UniqueID" = "RNAID"))  #add annotation
+```
+
+```{r}
+gene_level_ratios <- gene_level_ratios %>%
+  mutate("EndovsLP_InputCorr"= (EndovsLP)*EluateV/PlasmaInputV)
+
+Tube.levels<-levels(gene_level_ratios$Tube)
+RNAisolation.levels<-levels(gene_level_ratios$RNAisolation)
+TimeInterval.levels<-levels(gene_level_ratios$TimeInterval)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and TimeInterval. 
+
+```{r}
+EndovsLP_m1<-lme(EndovsLP~Tube*RNAisolation*TimeInterval,
+       random=~1|donorID, 
+       weights = varIdent(form = ~ 1 | RNAisolation),
+       data=gene_level_ratios)
+
+anova(EndovsLP_m1)
+
+
+EndovsLP_m1<-lme(EndovsLP~Tube*RNAisolation*TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsLP_m1)
+
+```
+
+Only Tube, and the interactions Tube:RNAisolation and Tube:TimeInterval are significant. There are no significant three-way interactions.
+
+Next, we look at second-order interactions:
+
+```{r}
+EndovsLP_m2<-lme(EndovsLP~(Tube+RNAisolation+TimeInterval)^2,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsLP_m2)
+```
+```{r}
+EndovsLP_m3<-lme(EndovsLP~Tube+RNAisolation+TimeInterval+Tube:RNAisolation+Tube:TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsLP_m3)
+```
+
+
+
+```{r, include=FALSE}
+#Comparing the models with and without interactions
+#only significant interactions
+EndovsLP_m1.Inter<-lme(EndovsLP~Tube+RNAisolation+TimeInterval+Tube:RNAisolation+Tube:TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios, method = "ML")
+
+#no interactions
+EndovsLP_m1.noInter<-lme(EndovsLP~Tube+RNAisolation+TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios, method = "ML")
+
+#all interactions
+EndovsLP_m1.allInter<-lme(EndovsLP~Tube*RNAisolation*TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios, method = "ML")
+
+anova(EndovsLP_m1.noInter, EndovsLP_m1.allInter)
+anova(EndovsLP_m1.noInter, EndovsLP_m1.Inter)
+anova(EndovsLP_m1.Inter, EndovsLP_m1.allInter)
+```
+
+checking  normality of residuals
+
+```{r}
+qqnorm(EndovsLP_m3$residuals)
+qqline(EndovsLP_m3$residuals)
+```
+
+For all tubes, the effect of time is investigated. The data is collapsed over RNA isolation method.
+
+```{r}
+EndovsLP_m.time<-emmeans(EndovsLP_m3, ~TimeInterval|Tube)
+plot(EndovsLP_m.time, comparisons=TRUE)
+```
+
+```{r}
+pairs(EndovsLP_m.time)
+```
+
+Now, for both isolation kits the effect of tube is investigated
+
+```{r}
+EndovsLP_m.method<-emmeans(EndovsLP_m3, ~Tube|RNAisolation)
+plot(EndovsLP_m.method, comparisons=TRUE)
+```
+
+```{r}
+pairs(EndovsLP_m.method)
+```
+
+## Endogenous vs RC spikes: relative smallRNA in plasma
+
+calculation: count mapped miRNAS / count mapped RC spikes
+
+```{r,message=FALSE, warning=FALSE}
+gene_level_ratios$GraphTube2<- paste(gene_level_ratios$Tube, gene_level_ratios$TimeInterval, sep = "_") 
+test <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsRC", groupvar=c("GraphTube2"))
+# Plot LP/endo in log10 scale
+spikes2 <- ggplot(test, aes(x=GraphTube2, y=10^measurevar_log_resc)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=Tube), size=1.2) +
+  geom_point(data=test, aes(x=GraphTube2, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  facet_wrap(~RNAisolation, scales = "free_x", ncol = 2)+
+  labs(x="", y="relative small RNA conc. (rescaled)", title=NULL, col = NULL, fill = NULL) +
+  scale_colour_manual(values=color_panel) +
+  scale_y_log10() +
+  theme_bar 
+ggplotly(spikes2)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r}
+EndovsRC_m1<-lme(EndovsRC~Tube*RNAisolation*TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsRC_m1)
+```
+
+```{r}
+anova_EndovsRC_m1 <- round(anova(EndovsRC_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+Second order interactions 
+
+```{r}
+EndovsRC_m2<-lme(EndovsRC~(Tube+RNAisolation+TimeInterval)^2,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsRC_m2)
+```
+
+Only significant interactions
+
+```{r}
+EndovsRC_m3<-lme(EndovsRC~Tube+RNAisolation+TimeInterval+Tube:TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsRC_m3)
+```
+
+For all tubes, the effect of time is investigated. The data is collapsed over RNA isolation method.
+
+```{r}
+EndovsRC.time<-emmeans(EndovsRC_m3, ~TimeInterval|Tube)
+plot(EndovsRC.time, comparisons=TRUE)
+```
+
+```{r}
+pairs(EndovsRC.time)
+```
+
+EDTA has a significantly higher smallRNA concentration in plasma at time T16.
+
+```{r, include=FALSE}
+#Compare models
+EndovsRC_m3_noInter<-lme(EndovsRC~Tube+RNAisolation+TimeInterval+Tube,
+       random=~1|donorID, 
+       data=gene_level_ratios, method = "ML")
+
+EndovsRC_m3_Inter<-lme(EndovsRC~Tube+RNAisolation+TimeInterval+Tube:TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios, method = "ML")
+
+EndovsRC_m3_allInter<-lme(EndovsRC~Tube*RNAisolation*TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios, method = "ML")
+
+anova(EndovsRC_m3_noInter, EndovsRC_m3_Inter)
+anova(EndovsRC_m3_noInter, EndovsRC_m3_allInter)
+anova(EndovsRC_m3_Inter, EndovsRC_m3_allInter)
+```
+
+
+
+## RNA Extraction efficiency
+
+Calculation: Endo/LP * EluateV/PlasmaInputV
+
+```{r}
+test <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsLP_InputCorr", groupvar=c("GraphTube2"))
+# Plot LP/endo in log10 scale
+spikes_conc <- ggplot(test, aes(x=GraphTube2, y=10^measurevar_log_resc)) + 
+  #geom_bar(position=position_dodge(), stat="identity")+
+  facet_wrap(~RNAisolation, scales = "free_x", ncol = 2)+
+  geom_errorbar(aes(ymin=ci_lower_oriscale, ymax=ci_upper_oriscale), colour="grey", width=.1) +
+  geom_point(aes(colour=Tube), size=1.2) +
+  geom_point(data=test, aes(x=GraphTube2, y=mean_oriscale), shape=4, colour="grey") +
+  geom_hline(yintercept = 1, linetype="dashed",colour="grey88") +
+  labs(x="", y="relative endogenous small RNA concentration", title=NULL, subtitle="endogenous small RNA vs LP (rescaled)", col = NULL) +
+  scale_colour_manual(values=color_panel) +
+  scale_y_log10() +
+  theme_bar 
+
+ggplotly(spikes_conc)
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r}
+EndovsLP_InputCorr_m1<-lme(EndovsLP_InputCorr~Tube*RNAisolation*TimeInterval,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsLP_InputCorr_m1)
+```
+
+```{r}
+anova_EndovsLP_InputCorr_m1 <- round(anova(EndovsLP_InputCorr_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+Second order interactions
+
+```{r}
+EndovsLP_InputCorr_m2<-lme(EndovsLP_InputCorr~(Tube+RNAisolation+TimeInterval)^2,
+       random=~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsLP_InputCorr_m2)
+```
+
+keeping only significant interactions
+
+```{r}
+EndovsLP_InputCorr_m3<-lme(EndovsLP_InputCorr~Tube+RNAisolation+TimeInterval+Tube:RNAisolation+Tube:TimeInterval,
+       random= ~1|donorID, 
+       data=gene_level_ratios)
+
+anova(EndovsLP_InputCorr_m3)
+```
+
+Checking normality of residuals
+
+```{r}
+qqnorm(EndovsLP_InputCorr_m3$residuals)
+qqline(EndovsLP_InputCorr_m3$residuals)
+```
+
+For all tubes, the effect of time is investigated. The data is collapsed over RNA isolation method.
+
+```{r}
+EndovsLP_InputCorr_m.time<-emmeans(EndovsLP_InputCorr_m3, ~TimeInterval|Tube)
+plot(EndovsLP_InputCorr_m.time, comparisons=TRUE)
+```
+```{r}
+pairs(EndovsLP_InputCorr_m.time)
+```
+
+For both isolation kits, the effect of tube is investigated.
+
+```{r}
+EndovsLP_InputCorr_m.method<-emmeans(EndovsLP_InputCorr_m3, ~Tube|RNAisolation)
+plot(EndovsLP_InputCorr_m.method, comparisons=TRUE)
+```
+```{r}
+pairs(EndovsLP_InputCorr_m.method)
+```
+
+# Gene Count (Sensitivity)
+
+number of miRNA with counts > 6
+
+```{r}
+cutoff_kit <- data.frame(Tube = sample_annotation$Tube, GraphTube = sample_annotation$GraphTube, median_th = 3)
+```
+
+```{r}
+miRNAs_long <-  miRNAs %>% gather(., key="UniqueID", value="est_counts", -MIMATID) %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,RNAID,RNAisolation,GraphTube,GraphKit, SampleID, Tube, BiologicalReplicate)), by=c("UniqueID" = "RNAID"))
+#keep only miRNA coding genes with more than 0 counts
+
+miRNAs_long <-  miRNAs_long %>% filter(est_counts > 0)
+
+number_miR_detected <-  miRNAs_long %>% group_by(SampleID) %>% dplyr::summarize(miR_above0=n()) 
+
+number_miR_detected <- full_join(number_miR_detected, 
+                                    miRNAs_long %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_above0=sum(est_counts)), 
+                                   by="SampleID")
+#cutoff_kit <- single_pos %>% group_by(GraphTube) %>% dplyr::summarise(median_th = median(filter_threshold))
+ miRNAs_cutoff <-  miRNAs %>% gather(., key="UniqueID", value="est_counts", -MIMATID) %>% #long format
+  left_join(., dplyr::select(sample_annotation,c(UniqueID,RNAID,RNAisolation,GraphTube,GraphKit, SampleID, Tube, BiologicalReplicate, TimeInterval)), by=c("UniqueID" = "RNAID")) 
+ 
+  #left_join(., cutoff_kit, by="GraphTube") #add the median cut-off for each kit
+ miRNAs_cutoff <-  miRNAs_cutoff %>% 
+  filter(est_counts > 6)
+ 
+number_miR_detected <- full_join(number_miR_detected, 
+                                    miRNAs_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(miR_aboveTh=n()),
+                                   by="SampleID")
+number_miR_detected <- full_join(number_miR_detected, 
+                                    miRNAs_cutoff %>% group_by(SampleID) %>%
+                                     dplyr::summarize(total_est_counts_aboveTh=sum(est_counts)), 
+                                   by="SampleID")
+number_miR_detected <- left_join(number_miR_detected, 
+                                   dplyr::select(sample_annotation, c(UniqueID,RNAID, GraphTube, GraphKit, RNAisolation, EluateV,SampleID, Tube, BiologicalReplicate, TimeInterval, donorID)),
+                                   by="SampleID")
+#convert to the original format
+ miRNAs_cutoff <- dplyr::select(miRNAs_cutoff, MIMATID, UniqueID, est_counts, Tube, BiologicalReplicate, TimeInterval) %>% 
+  spread(., key=UniqueID, value=est_counts)
+#write.csv( miRNAs_cutoff, file="../../../exRNAQC/ miRNAs_cutoff.csv",row.names=FALSE, na="")
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r}
+count_m1<-lme(miR_aboveTh~Tube*RNAisolation*TimeInterval,
+       random=~1|donorID, 
+       data=number_miR_detected)
+
+anova(count_m1)
+```
+```{r}
+anova_count_m1 <- round(anova(count_m1)[c(5, 6, 7), c(4)], digits = 3)
+
+```
+
+Second order interactions
+
+```{r}
+count_m2<-lme(miR_aboveTh~(Tube+RNAisolation+TimeInterval)^2,
+       random=~1|donorID, 
+       data=number_miR_detected)
+
+anova(count_m2)
+```
+
+Only significant interactions
+
+```{r}
+count_m3<-lme(miR_aboveTh~Tube+RNAisolation+TimeInterval+Tube:RNAisolation+Tube:TimeInterval,
+       random=~1|donorID, 
+       data=number_miR_detected)
+
+anova(count_m3)
+```
+
+Checking normality of residuals
+
+```{r}
+qqnorm(count_m3$residuals)
+qqline(count_m3$residuals)
+```
+
+For all tubes, the effect of time is investigated. The data is collapsed over RNA isolation method.
+
+```{r}
+count_m3.time<-emmeans(count_m3, ~TimeInterval|Tube)
+plot(count_m3.time, comparisons=TRUE)
+```
+```{r}
+pairs(count_m3.time)
+```
+
+Pair-wise comparison T test
+
+```{r}
+#T test
+# Pairwise comparisons
+count_pwc <-  number_miR_detected %>% group_by(TimeInterval) %>% pairwise_t_test(miR_aboveTh ~ Tube) %>% add_xy_position(x = "Tube")
+
+
+# Show p-values
+count_plot<-ggplot(number_miR_detected, aes(x = Tube, y = miR_aboveTh, color=Tube)) +
+  geom_boxplot() +
+  geom_point() +
+  facet_wrap(~ as.factor(TimeInterval)) +
+  stat_pvalue_manual(count_pwc, label = "p.adj") +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point + theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1), legend.position = 'none')+
+  labs(y = "sensitivity")
+count_plot
+
+```
+
+at T16 Citrate has significant lower sensitivity than the other tubes  
+```{r}
+pairs(count_m3.time)
+```
+
+For both isolation kits the effect of tubes is investigated
+
+```{r}
+count_m3.method<-emmeans(count_m3, ~Tube|RNAisolation)
+plot(count_m3.method, comparisons=TRUE)
+```
+
+```{r}
+pairs(count_m3.method)
+```
+
+Pair-wise comparison T test
+
+```{r}
+# Pairwise comparisons
+count_pwc <-  number_miR_detected %>% group_by(GraphKit) %>% pairwise_t_test(miR_aboveTh ~ Tube) %>% add_xy_position(x = "Tube")
+
+
+# Show p-values
+count_plot<-ggplot(number_miR_detected, aes(x = Tube, y = miR_aboveTh, color=Tube)) +
+  geom_boxplot() +
+  geom_point() +
+  facet_wrap(~ as.factor(GraphKit)) +
+  stat_pvalue_manual(count_pwc, label = "p.adj", y.position = c(215, 225, 235)) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point + theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1), legend.position = 'none')+
+  labs(y = "sensitivity")
+count_plot
+
+#ggsave("./smallSensitivity.pdf", plot = count_plot, dpi = 300)
+```
+
+
+# Area left of the curve (ALC)
+
+- The ALC (area-left-of-curve) calculation is done according to see Mestdagh et al., Nature Methods, 2014, and represents a precision metric:
+  1. Only genes that reach threshold (95% single positive (SP) elimination based on exRNAQC004) are taken into account.
+  2. All zero counts are replaced by NA
+  3. The log2 ratios of counts for each gene are determined, each time between 2 timepoints
+  4. Then, the absolute value of these log2 ratios are taken and ranked. This is plotted for every condition
+
+- The faster the curve reaches 100% -> the smaller the ALC -> the better the precision (indicates that the replicates give similar counts for each gene)
+
+The ALC values are summarized based on the average of the ALC values (after removing NAs). The dot plot at the end gives an overview of all these values.
+
+**Score: lower ALC = better**
+
+<!-- ## ALC - At least 1 replicate > threshold (and other > 0) -->
+
+```{r, fig.height=2, fig.width=2, message=FALSE, warning=FALSE, echo=FALSE, fig.show="hold"}
+double_positives<-miRNAs %>% dplyr::select(starts_with("RNA"),MIMATID) %>%
+  replace(., is.na(.),0) %>% #first change NAs to 0
+  mutate_if(is.numeric, funs(round)) #round everything to nearest integer
+ 
+double_positives<-double_positives[rowSums(double_positives %>% select_if(is.numeric) > 1, na.rm=T)>0,] # keep only the rows where at least one sample has more than 1
+
+generate_ALC <- function(sample_annotation, filter_key, filter_val){
+  sample_annotation <- sample_annotation %>%
+    filter((!!as.symbol(filter_key)) == filter_val)
+  ALC_input_all <- data.frame() 
+  for (duplicate_type in unique(sample_annotation$Tube)){
+    sample_duplicates<-sample_annotation%>% filter(Tube==duplicate_type) %>%
+      dplyr::select(UniqueID,RNAID,RNAisolation,GraphTube,TimeInterval,Tube, BiologicalReplicate)
+    cutoff95SP <- cutoff_kit[cutoff_kit$Tube==duplicate_type,]$median_th
+    if(nrow(sample_duplicates)>1){
+      #print(duplicate_type)
+      double_positives_sample<-double_positives %>% dplyr::select(MIMATID,sample_duplicates$RNAID) # only keep the replicates of one type
+      samples_comb <- combn(sample_duplicates$RNAID,2) #compare 2 of the 3 samples at a time
+      for (n_col in 1:ncol(samples_comb)) {
+        #print(samples_comb[,n_col])
+        nr_runA <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$RNAID== samples_comb[1,n_col],]$TimeInterval)
+        nr_runB <- gsub("^[A-Z]+","",sample_annotation[sample_annotation$RNAID== samples_comb[2,n_col],]$TimeInterval)
+        RepA <- sample_annotation[sample_annotation$RNAID== samples_comb[1,n_col],]$Donor
+        RepB <- sample_annotation[sample_annotation$RNAID== samples_comb[2,n_col],]$Donor
+       if ((RepA == RepB)){
+        varname <- paste0("T",nr_runA,"_",nr_runB) #make a name so you can backtrace which replicates are compared
+        #print(varname)
+        double_positives_2repl <- double_positives %>% dplyr::select(MIMATID, paste(samples_comb[1,n_col]), paste0(samples_comb[2,n_col])) %>%
+          filter_if(is.numeric, all_vars(.>0)) %>% #keep only the 2 replicates of one kit and keep only genes where both replicates have > 0 counts
+          filter_if(is.numeric, any_vars(.>cutoff95SP)) # remove genes where neither of the replicates reach the threshold that removes 95% of SP in that kit
+        correlation_samples<-double_positives_2repl %>%
+          mutate(log2_ratio=abs(log(get(samples_comb[1,n_col]),2)-log(get(samples_comb[2,n_col]),2))) %>%
+          dplyr::select(log2_ratio,MIMATID) #%>% drop_na()
+        ALC_input<-correlation_samples %>% arrange(log2_ratio) %>% # order by log2 ratio and then make a rank (counter) and rescale this to 1 (perc_counter)
+          #mutate(rank=percent_rank(log2_ratio)) %>% # this does not work: gives everything with log2ratio = 0 rank 0
+          mutate(counter = seq(1:nrow(double_positives_2repl)), Tube=duplicate_type, Replicates=varname, BiologicalReplicate = paste0(RepA,"-",RepB)) %>%
+          mutate(ReplID = paste0(Tube,"-",Replicates), perc_counter = counter/nrow(double_positives_2repl))
+       
+        ALC_input_all <- rbind(ALC_input_all, ALC_input)
+        }
+      }
+    }
+  }
+  ALC_input_all[filter_key] <- filter_val
+  return(ALC_input_all)
+}
+
+ALC_input_all <- data.frame() 
+for (method in unique(sample_annotation$RNAisolation)){
+  temp <-generate_ALC(sample_annotation, filter_key = 'RNAisolation', filter_val = method)
+  ALC_input_all <- rbind(ALC_input_all, temp)
+}
+max_ALC <-max(ALC_input_all$log2_ratio) # calculate the max ALC over everything (necessary for area calculation -> should always be the same in order to compare among kits)
+
+ALC <- ALC_input_all %>% dplyr::group_by(Tube,Replicates,BiologicalReplicate, RNAisolation) %>%
+  dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC*length(MIMATID))) %>%
+  #dplyr::summarise(ALC_calc = sum(log2_ratio)/(max_ALC)) %>%
+  mutate(ReplID = paste0(Tube,"-",Replicates))
+
+
+
+
+ALC_melt <- left_join(ALC, sample_annotation, by="Tube")
+ALC$BiologicalReplicate <- gsub("[-]TUBE[0-9]*","", ALC$BiologicalReplicate)
+ALC$Replicates <- gsub("^Rep04_0$","T0-T04", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_04$","T0-T04", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep16_0$","T0-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_16$","T0-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep16_04$","T04-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep04_16$","T04-T16", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep24_0$","T0-T24", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_24$","T0-T24", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep72_0$","T0-T72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep0_72$","T0-T72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep72_24$","T24-T72", ALC$Replicates)
+ALC$Replicates <- gsub("^Rep24_72$","T24-T72", ALC$Replicates)
+#ALC_melt <- ALC_melt %>% filter(Replicates %in% c("Rep0_04", "Rep04_16", "Rep0_16", "Rep0_24", "Rep24_72", "Rep0_72"))
+
+ALC$TimePoint <- ifelse(ALC$Replicates %in% c("T24_0", "T0_24", "T0_04", "T04_0"), "1st timepoint", ifelse(ALC$Replicates%in% c("T72_0", "T0_72", "T0_16", "T16_0"), "2nd timepoint", NA))
+ALC$TubeType <- ifelse(ALC$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+
+ALC_mean <- ALC %>% dplyr::group_by(Tube) %>% dplyr::summarise(ALC = mean(ALC_calc))
+
+ALC<-ALC %>% filter(!(is.na(TimePoint)))
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r}
+ALC_m1<-lme(ALC_calc~Tube*RNAisolation*TimePoint,
+       random=~1|BiologicalReplicate, 
+       data=ALC)
+
+anova(ALC_m1)
+```
+
+
+```{r}
+anova_ALC_m1 <- round(anova(ALC_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+There is a significant interaction between Tube:RNAIsolatiom
+
+Now, second-order interactions
+
+```{r}
+ALC_m2<-lme(ALC_calc~(Tube+RNAisolation+TimePoint)^2,
+       random=~1|BiologicalReplicate, 
+       data=ALC)
+
+anova(ALC_m2)
+```
+
+There interaction between Tube:RNAIsolatiom remains significant.
+
+Now, the model keeping only the significant interaction
+
+```{r}
+ALC_m3<-lme(ALC_calc~Tube+RNAisolation+TimePoint+Tube:RNAisolation,
+       random=~1|BiologicalReplicate, 
+       data=ALC)
+
+anova(ALC_m3)
+```
+
+Checking normality of residuals
+```{r}
+qqnorm(ALC_m3$residuals)
+qqline(ALC_m3$residuals)
+```
+
+For both RNA isolation methods, the effect of tube is investigated. The data is collapsed over time.
+
+```{r}
+ALC_m3.methods<-emmeans(ALC_m3, ~Tube|RNAisolation)
+plot(ALC_m3.methods, comparisons=TRUE)
+```
+```{r}
+pairs(ALC_m3.methods)
+```
+
+Pair-wise T test 
+
+```{r}
+# Pairwise comparisons
+ALC_pwc <- ALC %>% group_by(RNAisolation) %>% pairwise_t_test(ALC_calc ~ Tube) %>% add_xy_position(x = "Tube")
+
+# Show p-values
+alc_plot<-ggplot(ALC, aes(x = Tube, y = ALC_calc, color = Tube)) +
+  geom_boxplot()+
+  geom_point()+
+  scale_colour_manual(values=color_panel)+
+  facet_wrap(~ RNAisolation) +
+  stat_pvalue_manual(ALC_pwc, label = "p.signif") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8))+
+  labs(title = "Tube comparison within kits (T test)", y = "Area left of the curve")
+alc_plot
+```
+
+
+# Biotype: Percentage of miRNAs counts
+
+We are usually interested in miRNAs, and the other biotypes are often seen as contaminants. The fraction was calculated as the number of miRNA reads / total reads (mapped + spikes)
+
+```{r, message=FALSE, warning=F}
+perc_miRs <- miRNAs %>% gather(key="UniqueID",value="counts", -"MIMATID") %>% mutate(type=gsub("[0-9].*$","",MIMATID)) %>%
+  dplyr::group_by(UniqueID,type) %>% 
+  dplyr::summarise(sum_counts = sum(counts, na.rm=T)) %>% #calculate sum of MIMAT per sample
+  full_join(reads_complete %>% filter(reads=="all_mapped")) %>% 
+  mutate(perc=sum_counts/counts*100) %>% #calculate perc of miRs and spikes of total mapped reads
+  left_join(sample_annotation, by=c("UniqueID" = "RNAID"))
+```
+
+Linear mixed-effects model with crossed fixed effects of tube, kit and timelapse.
+
+```{r}
+Biotype_m1<-lme(perc~Tube*RNAisolation*TimeInterval,
+       random=~1|BiologicalReplicate, 
+       data=perc_miRs)
+
+anova(Biotype_m1)
+```
+
+```{r}
+anova_Biotype_m1 <- round(anova(Biotype_m1)[c(5, 6, 7), c(4)], digits = 3)
+```
+
+Second order interactions:
+
+```{r}
+Biotype_m2<-lme(perc~(Tube+RNAisolation+TimeInterval)^2,
+       random=~1|BiologicalReplicate, 
+       data=perc_miRs)
+
+anova(Biotype_m2)
+```
+
+Keeping  only the significant interactions:
+
+```{r}
+Biotype_m3<-lme(perc~Tube+RNAisolation+TimeInterval+Tube:RNAisolation+Tube:TimeInterval,
+       random=~1|BiologicalReplicate, 
+       data=perc_miRs)
+anova(Biotype_m3)
+```
+
+For both isolation kits the effect of tubes was investigated.
+
+```{r}
+Biotype_m3.methods<-emmeans(Biotype_m3, ~Tube|RNAisolation)
+plot(Biotype_m3.methods, comparisons=TRUE)
+```
+
+```{r}
+pairs(Biotype_m3.methods)
+```
+
+Pair-wise T test
+```{r}
+# Pairwise comparisons
+Biotype_pwc <- perc_miRs %>% group_by(RNAisolation) %>% pairwise_t_test(perc ~ Tube) %>% add_xy_position(x = "Tube")
+
+# Show p-values
+Biotype_plot<-ggplot(perc_miRs, aes(x = Tube, y = perc, color = Tube)) +
+  geom_boxplot()+
+  geom_point()+
+  scale_colour_manual(values=color_panel)+
+  facet_wrap(~ RNAisolation) +
+  stat_pvalue_manual(Biotype_pwc, label = "p.signif") +
+  theme(panel.grid.major.x=element_line(linetype = "dashed",color="gray88"), axis.text.x=element_text(size=8))+
+  labs(title = "Tube comparison within kits (T test)", y = "miRNA counts (%)")
+Biotype_plot
+```
+
+For all tubes the effect of time interval was investigated
+
+```{r}
+Biotype_m3.time<-emmeans(Biotype_m3, ~TimeInterval|Tube)
+plot(Biotype_m3.time, comparisons=TRUE)
+```
+
+```{r}
+pairs(Biotype_m3.time)
+```
+
+# Conclusion
+
+Highly significant interactions were found between Tube:RNAisolation and Tube:TimeInterval for metrics: extraction efficiency, sensitivity, and biotype. No significant interaction between RNAisolation:Timeinterval. 
+
+```{r}
+overview <- data.frame(row.names = c("Tube:RNAisolation","Tube:TimeInterval","RNAisolation:TimeInterval"), "RNA concentration" = anova_EndovsRC_m1, "extraction efficiency" = anova_EndovsLP_InputCorr_m1, "sensitivity" = anova_count_m1, "reproducibility" = anova_ALC_m1, "biotype" = anova_Biotype_m1, check.names = FALSE)
+overview_t <- t(overview)
+
+#breaks for heatmap
+bk1 <- c(seq(0,0.051,by=0.005))
+
+#make color palette
+custom_palette = c(colorRampPalette(brewer.pal(n = 7, name =
+  "RdBu"))(20))
+custom_palette2 = c(custom_palette[1:10], 'white')
+
+#make matrix with labels for heatmap
+labels_tab <- overview_t
+labels_tab[labels_tab<0.01]<-"<0.01"
+
+#make heatmap
+phm<-pheatmap::pheatmap(overview_t,
+                   breaks = bk1,
+                   display_numbers = labels_tab,fontsize_number=11, number_color="black",
+                   color = custom_palette2,
+                   angle_col = 45,
+                   cluster_rows=FALSE, cluster_cols=FALSE)
+
+ggsave("./smallInteractions2.pdf", plot = phm, dpi = 300)
+```
+
+
