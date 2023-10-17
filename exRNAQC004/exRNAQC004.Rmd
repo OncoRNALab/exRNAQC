@@ -1,7 +1,7 @@
 ---
 title: 'exRNAQC004: RNA purification kit performance (mRNA level), part of phase 1'
 author: "Annelien Morlion - on behalf of exRNAQC Consortium"
-date: "15/12/2020"
+date: "16/10/2023"
 output:
   html_document:
     code_folding: hide
@@ -22,8 +22,8 @@ For the evaluation of the different RNA isolation kits in the first phase of exR
 - miRNeasy Serum/Plasma Advanced Kit (abbreviated to MIRA; Qiagen, 217204)
 - mirVana PARIS Kit (abbreviated to MIRV (and MIRVE); Life Technologies, AM1556)
 - NucleoSpin miRNA Plasma Kit (abbreviated to NUC; Macherey-Nagel, 740981.50)
-- QIAamp ccfDNA/RNA Kit (abbreviated to CCF; Qiagen, 55184)
-- Plasma/Serum Circulating and Exosomal RNA Purification Kit/Slurry Format (abbreviated to CIRC; Norgen Biotek Corp., 42800) 
+- QIAamp ccfDNA/RNA Kit (abbreviated to QIA; Qiagen, 55184)
+- Plasma/Serum Circulating and Exosomal RNA Purification Kit/Slurry Format (abbreviated to NOR; Norgen Biotek Corp., 42800) 
 - Maxwell RSC miRNA Plasma and Exosome Kit (Promega, AX5740) in combination with the Maxwell RSC Instrument (abbreviated to MAX; Promega, AS4500)
 - MagNA Pure 24 Total NA Isolation Kit (Roche, 07 658 036 001) in combination with the MagNA Pure instrument (abbreviated to MAP; Roche, 07 290 519 001)
 
@@ -62,11 +62,11 @@ theme_bar<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5,
 theme_boxplot<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank(),axis.line.x = element_blank(),legend.position = "none")
 color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
 color_panel1 <-  c("#039748","#039748","#ffbf00","#ffbf00","#e35d6a","#e35d6a","#5bb75b","#5bb75b","#428bca","#428bca","#23496b","#23496b","#cc2028","#cc2028","#e87810")
-names(color_panel1) <- c("CCF1","CCF4","CIRC0.25","CIRC5","MAP2","MAP4","MAX0.1","MAX0.5","MIRA0.2","MIRA0.6","MIRV0.1","MIRV0.625","NUC0.3","NUC0.9","MIR0.2")
+names(color_panel1) <- c("QIA1","QIA4","NOR0.25","NOR5","MAP2","MAP4","MAX0.1","MAX0.5","MIRA0.2","MIRA0.6","MIRV0.1","MIRV0.625","NUC0.3","NUC0.9","MIR0.2")
 shape_panel1 <- c(16,15,16,15,16,15,16,15,16,15,16,15,16,15,16)
-names(shape_panel1) <- c("CCF1","CCF4","CIRC0.25","CIRC5","MAP2","MAP4","MAX0.1","MAX0.5","MIRA0.2","MIRA0.6","MIRV0.1","MIRV0.625","NUC0.3","NUC0.9","MIR0.2")
+names(shape_panel1) <- c("QIA1","QIA4","NOR0.25","NOR5","MAP2","MAP4","MAX0.1","MAX0.5","MIRA0.2","MIRA0.6","MIRV0.1","MIRV0.625","NUC0.3","NUC0.9","MIR0.2")
 linetype_panel1 <- c("solid", "dashed","solid", "dashed", "solid", "dashed", "solid", "dashed", "solid", "dashed", "solid", "dashed","solid","dashed","solid")
-names(linetype_panel1) <- c("CCF1","CCF4","CIRC0.25","CIRC5","MAP2","MAP4","MAX0.1","MAX0.5","MIRA0.2","MIRA0.6","MIRV0.1","MIRV0.625","NUC0.3","NUC0.9","MIR0.2")
+names(linetype_panel1) <- c("QIA1","QIA4","NOR0.25","NOR5","MAP2","MAP4","MAX0.1","MAX0.5","MIRA0.2","MIRA0.6","MIRV0.1","MIRV0.625","NUC0.3","NUC0.9","MIR0.2")
 color_panel2 <-  c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748")
 names(color_panel2) <- c("MagnaPure","Maxwell","miRNeasySPAkit","miRNeasySPkit","mirVana","Norgen","NucleoSpin","QIAamp")
 
@@ -92,15 +92,15 @@ Sequin spike-in controls are added to plasma prior to RNA isolation, and Externa
 Original spike concentrations in mix are taken from providers' annotation files (Garvan Institute of Medical Research for Sequins and ThermoFisher Scientific for ERCCs)
 
 ```{r spike_annotation, echo=FALSE}
-spike_conc_ERCC<-read_tsv("~almorlio/Dropbox (Vandesompele lab)/Shares/cms_095046.txt")
+spike_conc_ERCC<-read_tsv(here::here("docs","spikes","cms_095046.txt"))
 colnames(spike_conc_ERCC)<-c("numb_id","spike_id","subgroup","mix1","mix2","FC","log2mix1mix2")
 spike_conc_ERCC<-spike_conc_ERCC[,c("spike_id","mix1")]
 
-spike_conc_Seq<-read_tsv("~almorlio/Dropbox (Vandesompele lab)/Shares/RNAsequins_isoform_mix.v2.2.tsv")
+spike_conc_Seq<-read_tsv(here::here("docs","spikes","RNAsequins_isoform_mix.v2.2.tsv"))
 colnames(spike_conc_Seq)<-c("spike_id","length","mix1","mix2")
 spike_conc_Seq<-spike_conc_Seq[,c("spike_id","mix1")]
 
-spike_conc_gene_Seq<-read_tsv("~almorlio/Dropbox (Vandesompele lab)/Shares/RNAsequins_gene_mix.v2.2.tsv")
+spike_conc_gene_Seq<-read_tsv(here::here("docs","spikes","RNAsequins_gene_mix.v2.2.tsv"))
 colnames(spike_conc_gene_Seq)<-c("spike_id","length","mix1","mix2")
 spike_conc_gene_Seq<-spike_conc_gene_Seq[,c("spike_id","mix1")]
 ```
@@ -146,7 +146,7 @@ A strand specific protocol was used. To test if this worked as expected, we used
     - => **we will leave MagnaPure kits out of analyses**
 - Remark: although not relevant for exRNA quantification, in some cases it is an advantage to have a kit that isolates both DNA and RNA 
 
-```{r, fig.align="center", fig.width=6, fig.height=4, fig.keep="last", fig.cap="MagnaPure kits excluded based on strandedness (reads coming from other strand may indicate DNA contamination). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r, fig.align="center", fig.width=6, fig.height=4, fig.keep="last", fig.cap="MagnaPure kits excluded based on strandedness (reads coming from other strand may indicate DNA contamination). (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 strandedness = read.table(paste0(data_path, "RSeQC_output_nodedup.txt"),header=F) #cat */dedup_clumpify-subs_atstart/RSeQC_output.txt > RSeQC_output_nodedup.txt
 colnames(strandedness) = c("sample_name","strand")
 strandedness$sample_name <- gsub("-.*$","",strandedness$sample_name)
@@ -188,7 +188,7 @@ Low amount of input RNA, such as in plasma, results in many PCR duplicates. Afte
 Gene counts of 2 technical replicates are plotted against each other
 R-squared determined based on linear regression of the log counts of these genes (higher R2 = better)
 
-```{r dup_dedup1, fig.align="center", fig.width=8, fig.height=4, fig.cap="Pairwise RNA count comparison of first and third replicate of the CIRC5 kit without (left) and with (right) duplicate removal. R2 is the coefficient of determination (linear model that fits log10 values). The 95% SP cutoff removes at least 95% of single positives. Single positives are 0 in one replicate and > 0 in other. Green dots show data points that are filtered out with this cutoff. (CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input)"}
+```{r dup_dedup1, fig.align="center", fig.width=8, fig.height=4, fig.cap="Pairwise RNA count comparison of first and third replicate of the NOR5 kit without (left) and with (right) duplicate removal. R2 is the coefficient of determination (linear model that fits log10 values). The 95% SP cutoff removes at least 95% of single positives. Single positives are 0 in one replicate and > 0 in other. Green dots show data points that are filtered out with this cutoff. (NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input)"}
 double_positives <- readRDS("dedup_DP.rds") #see below for details of calculation
 single_pos <- readRDS("dedup_SPcutoff.rds")
 
@@ -197,12 +197,12 @@ single_pos_nodedup <- readRDS("nodedup_SPcutoff.rds")
 
 
 ###### EXAMPLE1
-sample_duplicates<-sample_annotation %>% filter(GraphKit=="CIRC5") %>%
+sample_duplicates<-sample_annotation %>% filter(GraphKit=="NOR5") %>%
     dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
 
 sample1 <- sample_duplicates$UniqueID[1]
 sample2 <- sample_duplicates$UniqueID[3]
-varname = "CIRC5_RNA1-RNA3"
+varname = "NOR5_RNA1-RNA3"
 
 
 ### Without PCR duplicate removal
@@ -271,7 +271,7 @@ grid.arrange(p1, p, nrow=1, top=varname)
 
 ```
 
-````{r dup_dedup2, fig.width=8, fig.height=4, fig.cap="Pairwise RNA count comparison of first and third replicate of the MAX0.5 kit without (left) and with (right) duplicate removal. R2 is the coefficient of determination (linear model that fits log10 values). The 95% SP cutoff removes at least 95% of single positives. Single positives are 0 in one replicate and > 0 in other. Green dots show data points that are filtered out with this cutoff. (MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input)"}
+```{r dup_dedup2, fig.width=8, fig.height=4, fig.cap="Pairwise RNA count comparison of first and third replicate of the MAX0.5 kit without (left) and with (right) duplicate removal. R2 is the coefficient of determination (linear model that fits log10 values). The 95% SP cutoff removes at least 95% of single positives. Single positives are 0 in one replicate and > 0 in other. Green dots show data points that are filtered out with this cutoff. (MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input)"}
 
 ###### EXAMPLE 2
 sample_duplicates<-sample_annotation %>% filter(GraphKit=="MAX0.5") %>%
@@ -359,10 +359,10 @@ rm(double_positives, double_positives_nodedup, double_pos_sample, DP_sample_node
 - Duplicate % is estimated by dividing the number of reads after clumpify by the number of reads after subsampling (no other filtering was applied between these steps)
   - **min=78.8%, mean=92.8%, max=97.9%**
 - **Remark: differences in % duplication have a high impact when translating it to number of usable non-duplicated reads!**.  In the most extreme case: only 2.1% of mapped reads is usable while for others > 21% is usable!
-- CCF4 and MAP4 seem to be the best (but for MAP4 this could be related to DNA contamination see [Strandedness])
+- QIA4 and MAP4 seem to be the best (but for MAP4 this could be related to DNA contamination see [Strandedness])
 - Note that Clumpify duplicate removal acts on read sequences (not on mapped reads) so this is not equal to the number of mappable reads
 
-```{r clump_perc, fig.align="center", fig.width=8, fig.height=4, fig.keep="last", fig.cap="Duplicate percentage. Based on number of reads remaining after Clumpify duplicate removal. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r clump_perc, fig.align="center", fig.width=8, fig.height=4, fig.keep="last", fig.cap="Duplicate percentage. Based on number of reads remaining after Clumpify duplicate removal. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 clumpify = data.table::fread(paste0(data_path,"lines_fastq_clumpify.txt"),header=TRUE, data.table = F) #see gather_output_preprocessing.sh: lines of different kinds of fastqs counted (original, after filtering, after subsampling, after clumpify dup removal)
 clumpify = clumpify %>% mutate(samplename=gsub("L1.*$","",samplename)) %>% 
   right_join(sample_annotation, by=c("samplename"="RNAID"))
@@ -399,7 +399,7 @@ rm(p1,p2)
 ### Link between duplication and plasma input volume?
 In plot below, lines connect samples in which RNA was isolated with same kit using lowest and highest input volume. Each time 3 technical replicates: the low and high input samples that were sequenced in same run are connected (but other connections within same kit would also be ok). 
 
-**Within a kit: higher input V, lower % of duplication**. However, this does not explain differences between kits: e.g. MIR0.2 % duplication is almost on same level as CIRC5 (while the plasma input volume is 25x lower). It depends on the RNA concentration and diversity after RNA isolation (see [RNA concentration]).
+**Within a kit: higher input V, lower % of duplication**. However, this does not explain differences between kits: e.g. MIR0.2 % duplication is almost on same level as NOR5 (while the plasma input volume is 25x lower). It depends on the RNA concentration and diversity after RNA isolation (see [RNA concentration]).
 
 ```{r dupl_input, fig.cap="Unique reads vs plasma input volume", fig.align="center", fig.width=6, fig.height=4, fig.keep="last"} 
 ggplot(clumpify,aes(x=PlasmaInputVml,y=100-(100*PERCENT_DUPLICATION),col=RNAisolation, group=paste0(TechnicalReplicate,RNAisolation)))+ #PERCENT_DUPLICATION = clumpify$READ_PAIR_DUPLICATES/clumpify$READ_PAIRS_EXAMINED
@@ -444,7 +444,7 @@ ggplot(reads_melt,aes(x=reorder(variable, dplyr::desc(reads)),y=reads, group = U
 ggsave("reads_preprocessing.pdf", plot=ggplot2::last_plot()+labs(title="Number of read pairs at different stages"), path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
 ```
 
-```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="Number of paired end reads remaining after duplicate removal. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="Number of paired end reads remaining after duplicate removal. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 reads_dedup <- reads_melt %>% filter(variable == "clump_lines") #only look at stats for reads after duplicate removal
 ggplot(reads_dedup, aes(x=reorder(GraphKit, dplyr::desc(GraphKit)),y=reads, group = PlasmaID, color = RNAisolation))+
   geom_point()+
@@ -539,7 +539,7 @@ kallisto_spikes_tpm <- kallisto_tpm %>% filter(str_detect(ensembl_transcript_id,
 ```
 
 % of reads that are pseudoaligned (after duplicate removal with Clumpify):
-```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="% of reads that are pseudoaligned by kallisto - after duplicate removal with Clumpify. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="% of reads that are pseudoaligned by kallisto - after duplicate removal with Clumpify. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 aligned_reads <- data.table::fread(here::here("data_raw/mapped.txt"), header=T, data.table = F) #read in file with nr of input reads and nr of pseudoaligned reads (kallisto log file)
 aligned_reads <- aligned_reads %>% mutate(percentage=pseudoaligned/total*100) %>% #%of reads after clumpify that are indeead pseudoaligned
   right_join(sample_annotation, by=c("samplename"="UniqueID"))
@@ -646,7 +646,7 @@ spikes_conc1 <- ggplot(gene_level_ratios, aes(x=reorder(GraphKit, dplyr::desc(Gr
 #spikes_conc1
 ```
 
-```{r CONCENTRATION2, fig.height=4, fig.width=6, fig.keep="last", fig.cap="Relative RNA concentration in eluate after RNA purification. Concentration: ratio of endogenous RNA to ERCC spikes. Values were first log transformed and rescaled to average of MIRV0.1, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown (grey lines). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r CONCENTRATION2, fig.height=4, fig.width=6, fig.keep="last", fig.cap="Relative RNA concentration in eluate after RNA purification. Concentration: ratio of endogenous RNA to ERCC spikes. Values were first log transformed and rescaled to average of MIRV0.1, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown (grey lines). (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 #calculate statistics for endogenous/ERCC (sd, sem, 95% ci)
 conc <- log_rescaling_CI(gene_level_ratios, measurevar="EndovsERCC", groupvar=c("GraphKit")) %>%
   mutate(measurevar_resc_oriscale = 10^measurevar_log_resc)
@@ -700,12 +700,12 @@ rm(conc)
 ```
 
 ## RNA yield
-For RNA sequencing purposes, we are most interested in the concentration of the eluate as we can only use a limited amount of volume during library prep. However, by multiplying the relative RNA concentrations above with the total eluate volume, we get an idea of the relative RNA yield in the eluate after RNA isolation. In case the total eluate volume is larger, the RNA will be more diluted (this is for example the case for MIRV: 100 microL eluate compared to only 12 microL for CCF). 
+For RNA sequencing purposes, we are most interested in the concentration of the eluate as we can only use a limited amount of volume during library prep. However, by multiplying the relative RNA concentrations above with the total eluate volume, we get an idea of the relative RNA yield in the eluate after RNA isolation. In case the total eluate volume is larger, the RNA will be more diluted (this is for example the case for MIRV: 100 microL eluate compared to only 12 microL for QIA). 
 
 **If the RNA yield is high, but the eluate volume is large, further concentrating the total eluate before library prep might give better results for your experiment.** However, we did not evaluate this in our study.
 **Scoring: the higher the yield, the better**
 
-```{r YIELD, fig.height=4, fig.width=6, fig.align="center", fig.show="last", fig.cap="Relative RNA yield of kits. Yield: eluate volume corrected RNA concentration. Values were first log transformed and rescaled to the average of MIRV0.1, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown (grey lines). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r YIELD, fig.height=4, fig.width=6, fig.align="center", fig.show="last", fig.cap="Relative RNA yield of kits. Yield: eluate volume corrected RNA concentration. Values were first log transformed and rescaled to the average of MIRV0.1, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown (grey lines). (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 # Correct relative concentration for eluate V (and for input V for next metric)
 gene_level_ratios <- gene_level_ratios %>%
   mutate("EndovsERCC_EluateCorr"= (endogenous/ERCC)*EluateV, 
@@ -771,7 +771,7 @@ Based on the previous plot with RNA yield in eluate, we observe differences in e
 
 - **with more input, you expect to have more yield in eluate. To correct for this: divide yield by input volume**
 - (endogenous/ERCC)*EluateV / PlasmaInputV
-- e.g. CCF1 has 10x more plasma input (=> more RNA) than MAX0.1, but this does not result in 10x more yield. MAX0.1 seems to extract the lower volume better than CCF1
+- e.g. QIA1 has 10x more plasma input (=> more RNA) than MAX0.1, but this does not result in 10x more yield. MAX0.1 seems to extract the lower volume better than QIA1
 - Although the yield is higher within a given kit when using the maximum input volume, this sometimes seems to be associated with a lower efficiency than the minimal input volume
 
 Remark: while we could also look at Sequin/ERCC ratio corrected for input and eluate volume (should give similar results), we decided to look at endogenous RNA as a more representative metric as this is the biomaterial of interest.
@@ -784,7 +784,7 @@ Note the variability between technical replicates: for some kits the performance
 
 **Scoring: the higher the efficiency, the better**
 
-```{r EFFICIENCY, fig.height=4, fig.width=6, fig.align="center", fig.cap="Relative efficiency of kits. Efficiency: plasma input volume corrected RNA yield. Values were first log transformed and rescaled to the average of CCF4, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r EFFICIENCY, fig.height=4, fig.width=6, fig.align="center", fig.cap="Relative efficiency of kits. Efficiency: plasma input volume corrected RNA yield. Values were first log transformed and rescaled to the average of QIA4, then transformed back to linear scale. Mean per kit (cross) and 95% confidence intervals shown. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 #calculate statistics for ERCC/endogenous (sd, sem, 95% ci)
 p1 <- ggplot(gene_level_ratios, aes(x=reorder(GraphKit, dplyr::desc(GraphKit)), y=EndovsERCC_Input_EluateCorr, fill=RNAisolation, colour=RNAisolation)) +
   #geom_bar(stat="identity") +
@@ -972,8 +972,8 @@ for (UniqueKit in unique(sample_annotation$GraphKit)){
 ```
 
 
-```{r cutoff_example1, fig.width=4, fig.height=4.5, fig.align="center", fig.keep="last", fig.cap="Pairwise RNA count comparison of first and third replicate of the CIRC5 kit. The coefficient of determination is 0.954 (linear model that fits log10 values). Single positives are 0 in one replicate and > 0 in other. The cutoff of 5 removes 95.37% of single positives. Green dots show data points that are filtered out with this cutoff. (CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input)"}
-sample_duplicates<-sample_annotation_all %>% filter(GraphKit=="CIRC5") %>%
+```{r cutoff_example1, fig.width=4, fig.height=4.5, fig.align="center", fig.keep="last", fig.cap="Pairwise RNA count comparison of first and third replicate of the NOR5 kit. The coefficient of determination is 0.954 (linear model that fits log10 values). Single positives are 0 in one replicate and > 0 in other. The cutoff of 5 removes 95.37% of single positives. Green dots show data points that are filtered out with this cutoff. (NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input)"}
+sample_duplicates<-sample_annotation_all %>% filter(GraphKit=="NOR5") %>%
     dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
 
 sample1 <- sample_duplicates$UniqueID[1]
@@ -982,8 +982,8 @@ sample2 <- sample_duplicates$UniqueID[3]
 double_pos_sample<-double_positives %>%
         dplyr::select(ensembl_gene_id,sample1, sample2)
 
-varname = "CIRC5_RNA1-RNA3"
-threshold <- as.numeric(paste(single_pos %>% filter(GraphKit=="CIRC5" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
+varname = "NOR5_RNA1-RNA3"
+threshold <- as.numeric(paste(single_pos %>% filter(GraphKit=="NOR5" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
 
 double_pos_sample$colouring <- as.factor(ifelse(double_pos_sample[,paste(sample1)] > threshold, "> cutoff", 
                                                       ifelse(double_pos_sample[,paste(sample2)] > threshold, "> cutoff", "<= cutoff")))
@@ -1003,7 +1003,7 @@ p <- ggplot(double_pos_sample, aes(x=log(get(sample1)+1,10), y=log(get(sample2)+
   scale_y_continuous(limits=c(0,5)) +
   labs(title=paste(varname, "with cutoff of", threshold),
        subtitle=paste0("% remaining after filtering: ",
-                       round(single_pos[single_pos$full_name=="CIRC5_RNA1-RNA3",]$remainingSP*100,2),"% of SP (R2 = ",
+                       round(single_pos[single_pos$full_name=="NOR5_RNA1-RNA3",]$remainingSP*100,2),"% of SP (R2 = ",
                        round(lm_rsquared,3), ")"), #R squared of linear model fitting log values of 2 technical replicates
                        x=paste0("log10(replicate1 + 1)"), y=paste0("log10(replicate3 + 1)"))
 
@@ -1011,8 +1011,8 @@ rm(lm_rsquared, lm_tmp)
 
 ggExtra::ggMarginal(p, type = "histogram", size=7)
 
-ggsave("CIRC5_afterdedup.pdf",ggExtra::ggMarginal(p, type = "histogram", size=7), path= here::here("data_output","plots"), height=4.2, width=3.8, dpi = 300, useDingbats=F)
-#write.table(x = dplyr::select(double_pos_sample, c("ensembl_gene_id", paste(sample1), paste(sample2))), file = "test_CIRC5_RNA1_3.txt",sep="\t",quote = F, na = "",row.names=F)
+ggsave("NOR5_afterdedup.pdf",ggExtra::ggMarginal(p, type = "histogram", size=7), path= here::here("data_output","plots"), height=4.2, width=3.8, dpi = 300, useDingbats=F)
+#write.table(x = dplyr::select(double_pos_sample, c("ensembl_gene_id", paste(sample1), paste(sample2))), file = "test_NOR5_RNA1_3.txt",sep="\t",quote = F, na = "",row.names=F)
 
 ```
 
@@ -1066,7 +1066,7 @@ ggsave("MIRV0.1_afterdedup.pdf",ggExtra::ggMarginal(p, type = "histogram", size=
  
 - **Scoring: take the negative of the cutoff values (so that higher = better precision)**
 
-```{r cutoff_overview, fig.height=4, fig.width=6, fig.align="center", fig.cap="Count threshold that removes 95% of single positives for each pairwise comparison of replicates. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r cutoff_overview, fig.height=4, fig.width=6, fig.align="center", fig.cap="Count threshold that removes 95% of single positives for each pairwise comparison of replicates. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 cutoff_kit <- single_pos %>% group_by(GraphKit) %>% dplyr::summarise(median_th = median(filter_threshold))
 
 p <- ggplot(single_pos, aes(x=GraphKit, y=filter_threshold, color=Replicates)) +
@@ -1116,7 +1116,7 @@ rm(list=grep("pos|tmp|duplicates|test|single|nique|replicate|name",ls(),value=T)
 - **Scoring: data retention: more % of counts remaining = better precision** 
   - Is related to the cutoff & initial amount of reads (after duplicate removal)
 
-```{r filter_impact, message=FALSE,warning=FALSE,echo=FALSE, fig.width=8, fig.height=4.5, fig.align="center", fig.keep="last", fig.cap="Impact of filtering (filter removes 95% of single positives). Left: % of total counts that are kept after applying filter; right: sum of counts that are not filtered out. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r filter_impact, message=FALSE,warning=FALSE,echo=FALSE, fig.width=8, fig.height=4.5, fig.align="center", fig.keep="last", fig.cap="Impact of filtering (filter removes 95% of single positives). Left: % of total counts that are kept after applying filter; right: sum of counts that are not filtered out. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 
 filter_df <- left_join(cutoff_kit, sample_annotation %>% dplyr::select(GraphKit,UniqueID,TechnicalReplicate, RNAisolation), by="GraphKit")
 filter_df$totalcounts <- 0
@@ -1211,13 +1211,13 @@ rm(p,p1,p2,p3)
 ### Robustness of cutoff
 We tested how robust these 95% single positive elimination cutoffs are at different downsampling levels
 - For some kits, this cutoff is very stable, while for others it keeps on increasing with a higher subsampling level. 
-- Also differences within same purification kit: stable cutoff for CIRC5, but cutoff increases in CIRC0.25 with higher subsampling levels. 
-- Most variability in MIRV0.1, CIRC0.25, NUC0.3 & MAX0.1. 
+- Also differences within same purification kit: stable cutoff for NOR5, but cutoff increases in NOR0.25 with higher subsampling levels. 
+- Most variability in MIRV0.1, NOR0.25, NUC0.3 & MAX0.1. 
 
-Within a kit, cut-off more stable for high than for low input volume, but more related to RNA concentration in eluate than plasma input volume. For example, MIR0.2 has a slightly more stable cut-off than MIRA0.2 and a much more stable cut-off than CIRC0.25. 
+Within a kit, cut-off more stable for high than for low input volume, but more related to RNA concentration in eluate than plasma input volume. For example, MIR0.2 has a slightly more stable cut-off than MIRA0.2 and a much more stable cut-off than NOR0.25. 
 Possible explanation: less RNA in eluate -> more stochastic variation in RNA between replicates -> sequencing deeper does not remove stochastic variation, it just increases counts and therefore cut-off. 
 
-```{r various_subs, fig.align="center", fig.height=5, fig.width=8, fig.cap="Robustness of filter threshold at different downsampling levels. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r various_subs, fig.align="center", fig.height=5, fig.width=8, fig.cap="Robustness of filter threshold at different downsampling levels. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 
 single_pos <- readRDS(paste(here::here("data_raw"), "varioussubs_cutoff.rds",sep='/')) #data frame created in a similar way as cutoff determination above
 full_nr <- scales::format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
@@ -1355,7 +1355,7 @@ ggsave("genes_nofilter.pdf", plot=p1, path= here::here("data_output","plots"), h
 ggsave("genes_filtered.pdf", plot=p3, path= here::here("data_output","plots"), height=4, width=6, dpi = 300, useDingbats=F)
 ```
 
-```{r, echo=FALSE, fig.height=4.5, fig.width=8, fig.align="center", fig.keep="last", fig.cap="Number of protein coding genes that are detected. Left: all protein coding genes that are detected with at least one count; right: protein coding genes that are reproducibly detected (≥ precision threshold that eliminates 95% of single positives). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r, echo=FALSE, fig.height=4.5, fig.width=8, fig.align="center", fig.keep="last", fig.cap="Number of protein coding genes that are detected. Left: all protein coding genes that are detected with at least one count; right: protein coding genes that are reproducibly detected (≥ precision threshold that eliminates 95% of single positives). (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 
 grid.arrange(p1 + scale_y_continuous(limits=c(0,20000)) + theme(legend.position="none"),p3 + scale_y_continuous(limits=c(0,20000)) + theme(legend.position="none"),nrow=1)
 ```
@@ -1392,7 +1392,7 @@ rm(p,p1,p2,p3,p4)
 ## Coverage
 Look at how many % of the transcriptome is covered at least once (based on genomeCoverageBed (BEDtools 2.27))
 
-```{r Francisco_coverage, fig.width=6, fig.height=4, fig.align="center", fig.cap="Percentage of the transcriptome that is covered at least once. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r Francisco_coverage, fig.width=6, fig.height=4, fig.align="center", fig.cap="Percentage of the transcriptome that is covered at least once. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 require(data.table)
 require(pheatmap)
 # rds objects coming from Coverage_processing.R
@@ -1518,7 +1518,7 @@ for (replicates in unique(ALC_input_all$ReplID)) { # plot the ALC (= the colored
 ```
 
 ### Overview ALC
-```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="Precision based on ALCs (area-left-of-curve). The lower the ALC, the better (less difference between replicates). (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r, fig.align="center", fig.width=6, fig.height=4, fig.cap="Precision based on ALCs (area-left-of-curve). The lower the ALC, the better (less difference between replicates). (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 ALC <- ALC %>% arrange(GraphKit,ReplID) %>% mutate(Repl=c("RNA1","RNA3","RNA2")) %>% mutate(tmp_SampleID=paste0(GraphKit,"_",Repl)) ## just for easy integration later on order according to Graphkit and replicates (so first Repl1_2, then Repl1_3, then Repl2_3) and add a sampleID column like in other dfs
 #remark: if you have more or less replicates, change mutate(Repl) part above accordingly
 
@@ -1629,7 +1629,7 @@ corrplot(cor_z_scores, order="hclust", type="upper",
 ### Comparison of kits
 Many kits do quite well despite a rather low plasma input volumes (plasma input volume, in ml, is each time attached to the abbreviation of the kit)
 
-```{r heatmap, fig.align="center", fig.width=8, fig.height=5, fig.cap="Comparison of kit performance based on robust z-scores. Higher means a better performance. Complete hierarchical clustering based on Euclidean distance. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input; concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume; average: average z score over all metrics)"}
+```{r heatmap, fig.align="center", fig.width=8, fig.height=5, fig.cap="Comparison of kit performance based on robust z-scores. Higher means a better performance. Complete hierarchical clustering based on Euclidean distance. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input; concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume; average: average z score over all metrics)"}
 tmp <- z_indiv_robust %>% drop_na() %>% arrange(GraphKit) %>%
   dplyr::group_by(GraphKit) %>% summarise_if(is.numeric, mean) %>%
   left_join(unique(dplyr::select(sample_annotation, c("GraphKit"#,"input_volume"="PlasmaInputV"))))%>%
@@ -1678,7 +1678,7 @@ pheatmap::pheatmap(t(tmp),
 #ggsave("Overview_performance.pdf", plot=ggplot2::last_plot(), path= here::here("data_output","plots"), height=5, width=6, dpi = 300, useDingbats=F)
 ```
 
-```{r rescaled_heatmap, fig.align="center", fig.width=8, fig.height=5, fig.cap="Comparison of kit performance based on robust z-scores - rescaled to [0,1] to stress difference within a metric. Higher means a better performance. Complete hierarchical clustering based on Euclidean distance. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input; concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume; average: average z score over all metrics)"}
+```{r rescaled_heatmap, fig.align="center", fig.width=8, fig.height=5, fig.cap="Comparison of kit performance based on robust z-scores - rescaled to [0,1] to stress difference within a metric. Higher means a better performance. Complete hierarchical clustering based on Euclidean distance. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input; concentration: relative endogenous miRNA concentration based LP spikes; data retention: % of counts left after applying precision threshold; efficiency: yield corrected for plasma input volume ; miR count: number of miRNAs after applying precision threshold; precision ALC: precision based on area-left-of-curve; precision threshold: count threshold to filter out 95% of single positives between replicates; yield: concentration corrected for eluate volume; average: average z score over all metrics)"}
 tmp_resc <- apply(tmp, 2, rescale) # rescale all metrics (columns) to values between 0 and 1
 annotation_row = data.frame(
                     average = rescale(c(tmp2$average), to=c(0,1)))
@@ -1704,9 +1704,9 @@ Selection of two kits for phase 2 of the study is based on robust z-score transf
 
 We looked at both metrics but in close calls, the sensitivity was given a higher weight. Moreover, we wanted to include at least one kit which is able to purify RNA in case you have less than 1ml of plasma as it is not always possible to collect or use multiple ml. 
 
-Selection: QIAamp (**CCF4**) & miRNeasy serum/plasma (**MIR0.2**)
+Selection: QIAamp (**QIA4**) & miRNeasy serum/plasma (**MIR0.2**)
 
-```{r kit_selection, fig.align="center", fig.height=5, fig.width=7, fig.cap="Robust z-scores (median per RNA isolation kit) for sensitivity (number of miRNAs) (x) and precision (ALC, area-left-of-curve) (y). CCF and MIR0.2 kits are selected for phase II. (CCF1: QIAamp ccfDNA/RNA kit, 1 ml input; CCF4: QIAamp ccfDNA/RNA kit, 4 ml input; CIRC0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; CIRC5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
+```{r kit_selection, fig.align="center", fig.height=5, fig.width=7, fig.cap="Robust z-scores (median per RNA isolation kit) for sensitivity (number of miRNAs) (x) and precision (ALC, area-left-of-curve) (y). QIA and MIR0.2 kits are selected for phase II. (QIA1: QIAamp ccfDNA/RNA kit, 1 ml input; QIA4: QIAamp ccfDNA/RNA kit, 4 ml input; NOR0.25: plasma/serum circulating and exosomal RNA purification kit, 0.25 ml input; NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input; MAX0.1: Maxwell RSC miRNA plasma and exosome kit, 0.1 ml input; MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input; MIR0.2: miRNeasy serum/plasma kit, 0.2 ml input; MIRA0.2: miRNeasy serum/plasma advanced kit, 0.2 ml input; MIRA0.6: miRNeasy serum/plasma advanced kit, 0.6 ml input; MIRV0.1: mirVana PARIS kit, 0.1 ml input; MIRV0.625: mirVana PARIS kit, 0.625 ml input; NUC0.3: NucleoSpin miRNA plasma kit, 0.3 ml; NUC0.9: NucleoSpin miRNA plasma kit, 0.9 ml input)"}
 # ggplot(z_indiv, aes(x=gene_count, y=precision_ALC, col=GraphKit)) + geom_point() + theme_point + ggrepel::geom_text_repel(aes(label=GraphKit))  + scale_colour_manual(values=color_panel1) + theme(legend.position="none")
 # 
 # z_indiv_med <- z_indiv %>% group_by(GraphKit) %>% summarise_if(is.numeric, median, na.rm=T)
@@ -1827,3 +1827,5 @@ print(ggplot(perc_per_conc_ERCC,aes(x=log(mix1,10),y=meanp*100))+
   theme_classic()+
   theme(panel.grid.major.y=element_line(color = "lightgrey",linetype="dashed",size=0.2)))
 ```
+
+
