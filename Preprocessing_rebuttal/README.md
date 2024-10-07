@@ -1,10 +1,8 @@
-Based on the information you provided, here’s a tailored `README.md` file for your repository:
-
 ---
 
-# exRNAQC - RNA Sequencing Data Preprocessing
+# exRNAQC - Data Preprocessing
 
-This repository contains all the scripts and supplementary files required for preprocessing full RNA-seq and small RNA-seq data as part of the **exRNAQC** project. The repository includes Singularity files to construct container images, main pipelines for data preprocessing, annotation files, and small test datasets to validate the pipelines.
+This repository contains all the scripts and supplementary files required for preprocessing full length RNA-seq and small RNA-seq data as part of the **exRNAQC** project. The repository includes Singularity files to construct container images, main pipelines for data preprocessing, annotation files, and small test datasets to validate the pipelines.
 
 ## Table of Contents
 1. [Project Structure](#project-structure)
