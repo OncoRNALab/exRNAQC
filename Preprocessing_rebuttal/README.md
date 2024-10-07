@@ -14,9 +14,10 @@ This repository contains all the scripts and supplementary files required for pr
     - [3. Update configuration files](#3-update-configuration-files)
     - [4. Prepare input data](#4-prepare-input-data)
     - [5. Execute the preprocessing pipelines](#5-execute-the-preprocessing-pipelines)
-5. [License](#license)
-6. [Contact](#contact)
-
+5. [Output Folder Structure](#output-folder-structure)
+6. [License](#license)
+7. [Contact](#contact)
+   
 ## Project Structure
 
 The repository is structured as follows:
