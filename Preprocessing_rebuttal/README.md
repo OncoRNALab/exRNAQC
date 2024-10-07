@@ -11,7 +11,7 @@ This repository contains all the scripts and supplementary files required for pr
 4. [Usage](#usage)
     - [1. Build the Singularity images](#1-build-the-singularity-images)
     - [2. Run the containers](#2-run-the-containers)
-    - - [3. Prepare input data](#4-prepare-input-data)
+    - [3. Prepare input data](#4-prepare-input-data)
     - [4. Update configuration files](#3-update-configuration-files)
     - [5. Execute the preprocessing pipelines](#5-execute-the-preprocessing-pipelines)
 5. [Output Folder Structure](#output-folder-structure)
