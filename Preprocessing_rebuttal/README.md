@@ -11,8 +11,8 @@ This repository contains all the scripts and supplementary files required for pr
 4. [Usage](#usage)
     - [1. Build the Singularity images](#1-build-the-singularity-images)
     - [2. Run the containers](#2-run-the-containers)
-    - [3. Update configuration files](#3-update-configuration-files)
-    - [4. Prepare input data](#4-prepare-input-data)
+    - - [3. Prepare input data](#4-prepare-input-data)
+    - [4. Update configuration files](#3-update-configuration-files)
     - [5. Execute the preprocessing pipelines](#5-execute-the-preprocessing-pipelines)
 5. [Output Folder Structure](#output-folder-structure)
 6. [License](#license)
@@ -160,7 +160,8 @@ Out_FullRNA/
     │       ├── RNA022999.Aligned.sortedByCoord.out.bam.bai # Indexed BAM file
 ```
 ```
-├── RNA004105						# Main sample directory
+Out_SmallRNA/
+└── RNA014937/                            # Folder named after the sample
 │   ├── dedup_none-subs_atstart						# Subdirectory (dependent on subsampling choices)
 │   │   ├── logs							# folder with error and output files for each script
 │   │   │   ├── 00_combinecopy_RNA004105L1.err
