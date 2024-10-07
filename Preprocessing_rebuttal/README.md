@@ -127,6 +127,76 @@ For **small RNA-seq**:
 python3 SmallRNA_preprocessing.py --config config_small.yaml
 ```
 
+## Output Folder Structure
+
+The pipeline generates an output folder for each sample (e.g., `RNA022999`). Here's an overview of the structure and contents of the output directory for each sample:
+
+```
+Out_FullRNA/
+└── RNA022999/                            # Folder named after the sample
+    ├── cutadapt/                         # Contains fastq files after adaptor trimming
+    │   ├── RNA022999_1_trim.fastq.gz
+    │   ├── RNA022999_2_trim.fastq.gz
+    ├── trimming/                         # Contains fastq files after quality filtering and length trimming
+    │   ├── RNA022999_1_trim_len_qc.fastq.gz
+    │   ├── RNA022999_2_trim_len_qc.fastq.gz
+    ├── FASTQC/                           # Quality control reports from FASTQC
+    │   ├── RNA022999_1_trim_fastqc.html
+    │   ├── RNA022999_2_trim_fastqc.html
+    ├── dedup_clumpify-subs_atstart/    # Main output directory after deduplication
+    │   ├── RNA022999_1_trim_len_qc_subs.fastq.gz # Quality filtered, subsampled, and deduplicated fastq
+    │   ├── RSeQC_output.txt              # Output from RSeQC for strandedness analysis
+    │   ├── RNA022999_htout/              # Gene counts output
+    │   │   ├── RNA022999.Aligned.sortedByName.out_htseq_counts.txt
+    │   ├── RNA022999_idxout/             # Counts per chromosome/spike
+    │   │   ├── RNA022999.Aligned.sortedByCoord.out_idxstat.txt
+    │   ├── RNA022999_klout/           # Kallisto abundance estimation files
+    │   │   ├── abundance.tsv
+    │   │   ├── abundance.h5
+    │   ├── RNA022999_srout/              # STAR alignment outputs
+    │       ├── RNA022999_Aligned.sortedByCoord.out.bam  # Sorted by coordinate
+    │       ├── RNA022999_Aligned.sortedByName.out.bam   # Sorted by name
+    │       ├── RNA022999.Aligned.sortedByCoord.out.bam.bai # Indexed BAM file
+```
+```
+├── RNA004105						# Main sample directory
+│   ├── dedup_none-subs_atstart						# Subdirectory (dependent on subsampling choices)
+│   │   ├── logs							# folder with error and output files for each script
+│   │   │   ├── 00_combinecopy_RNA004105L1.err
+│   │   │   ├── ...
+│   │   │   └── 08_zipfastq_RNA004105L1.out
+│   │   ├── redundant_notann.txt					# unique read ids that are both in miR/contam and in notann
+│   │   ├── RNA004105_allspikes.txt				# which unique read sequence maps to which spike and how mnay times does the sequence occur
+│   │   ├── RNA004105_collapsed_nospikes.fa			# same as collapse.fa, but without spike reads
+│   │   ├── RNA004105_collapse.fa				# FASTA file where identical sequences of FASTQ are collapsed: each unique sequence gets a unique id (first number behind ">") followed by the number of reads with this sequence
+│   │   ├── RNA004105_contam.txt				# contaminant reads: rRNA, snRNA, misc_RNA, tRNA, piRNA counts (sample_id, read_id, counts, type, ensembl_id) 
+│   │   ├── RNA004105_isomiRs.txt				# isomiR reads 
+(sample_id, read_id, counts, MIMAT_id, 5'offset, 3'offset, sequence)
+│   │   ├── RNA004105_mapped.sam				# bowtie output with mapped reads (no spikes)
+│   │   ├── RNA004105_miRs.txt				# counts per miRNA (MIMAT) = sum of isomiR counts
+│   │   ├── RNA004105_not_annotated_nomiR_nocontam.txt	# not annotated (but mapped) reads without redundant reads (sse redundant_notann.txt)
+│   │   ├── RNA004105_not_annotated.txt			# not annotated (but mapped) reads (read_id, counts, sequence, chrommosome, start, end, strand)
+│   │   ├── RNA004105.pdf					# length distributions per type
+│   │   ├── RNA004105_qc_subs.fastq.gz			# subsampled (quality filtered) FASTQ
+│   │   ├── RNA004105_read_count_new.txt			# nr of mapped (without spikes!), miR, contam, and notann reads
+│   │   ├── RNA004105_read_length_new.txt			# read length per unique read
+│   │   ├── RNA004105_spikes.txt				# sum of all reads per spike
+│   │   ├── RNA004105_technical_artifacts.txt		# technical artifacts
+│   │   └── scripts							# folder with all the scripts (to repeat/check analyses)
+│   │       ├── 00_combinecopy_RNA004105L1.sh
+│   │       ├── ...
+│   │       └── 08_zipfastq_RNA004105L1.sh
+│   ├── FASTQC_original							# FASTQC of original FASTQ
+│   │   ├── RNA004105_fastqc.html
+│   │   └── RNA004105_fastqc.zip
+│   ├── FASTQC_qc							# FASTQC of trimmed + quality filtered FASTQ
+│   │   ├── RNA004105_qc_fastqc.html
+│   │   └── RNA004105_qc_fastqc.zip
+│   ├── RNA004105_clipped.fastq.gz				# FASTQ after adapter trimming
+│   ├── RNA004105.fastq.gz					# original FASTQ
+│   ├── RNA004105_qc.fastq.gz				# FASTQ after adapter trimming & quality control
+│   └── RNA004105_line_count.txt				# number of lines in the different FASTQ files (should be divided by 4 to get the number of reads)
+```
 ## License
 
 
