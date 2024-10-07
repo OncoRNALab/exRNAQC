@@ -1,0 +1,12 @@
+output_dir_abs: "../DataTestOutSmall" #output path
+subsampling: 'yes'
+subsample_to_nr: "700000"     
+repeat_analysis: "yes"
+adapter: "TGGAATTCTCGGGTGCCAAGG"
+mismatch: 0
+mismatchregion: 25
+spike_seqs: "../resources/spike_sequences.csv"
+bowtie_index: "../resources/bth38/Homo_sapiens.GRCh38.dna.primary_assembly.chrIS_spikes_45S"
+data_type: "se"
+SampleList: "../SmallDataTest_noSubs/file_list.txt"
+base_dir: "../SmallDataTest_noSubs"
