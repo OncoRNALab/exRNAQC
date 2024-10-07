@@ -129,19 +129,9 @@ python3 SmallRNA_preprocessing.py --config config_small.yaml
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Contact
-
-For any questions or issues, please contact:
-
-- **Your Name**: [your-email@example.com](mailto:your-email@example.com)
-- GitHub: [@your-username](https://github.com/your-username)
 
 ---
 
 ### Notes:
-- Be sure to replace the placeholder URLs and email addresses with the actual ones relevant to your repository.
-- You can also customize this further by adding badges (e.g., build status, license), screenshots, or more specific details about your project.
-
-Let me know if you'd like me to modify or expand any part of this!
