@@ -88,19 +88,7 @@ For **small RNA-seq** preprocessing:
 ```bash
 singularity run small.sif -mem 60000M
 ```
-
-### 3. Update configuration files
-
-Navigate to the `scripts` directory and review the YAML configuration files (`config_full.yaml` and `config_small.yaml`). You will need to:
-
-1. Set the correct paths to the reference index and annotation files (e.g., `.gtf` files).
-2. Set `repeat_analysis` to `no` unless repeat analysis is required.
-
-```bash
-cd scripts/
-```
-
-### 4. Prepare input data
+### 3. Prepare input data
 
 Before running the main pipelines, create a text file containing the sample names and paths to the FASTQ files (paired-end or single-end). You can use the `get_sample_list.py` script to generate this file.
 
@@ -108,6 +96,18 @@ For example, to generate a sample list for small RNA data:
 
 ```bash
 python3 get_sample_list.py -i ../SmallRNA_DataTest/ -o ../SmallRNA_DataTest/
+```
+
+### 4. Update configuration files
+
+Navigate to the `scripts` directory and review the YAML configuration files (`config_full.yaml` and `config_small.yaml`). You will need to:
+
+1. Set the correct paths to the reference index and annotation files (e.g., `.gtf` files).
+2. Set `repeat_analysis` to `no` unless repeat analysis is required.
+3. Set the path to the text file containing sample names and paths
+
+```bash
+cd scripts/
 ```
 
 Ensure that your sample list format matches the example in `file_list.txt`.
