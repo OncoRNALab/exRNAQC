@@ -48,7 +48,7 @@ The repository is structured as follows:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/exRNAQC.git
+   git clone https://github.com/OncoRNALab/exRNAQC.git
    cd exRNAQC
    ```
 
