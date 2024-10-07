@@ -1,0 +1,128 @@
+BootStrap: docker
+From: ubuntu:20.04
+%environment
+    # Ensure FastQC and other tools are available at runtime
+    export PATH="/opt/fastqc:${PATH}"
+    export PATH="/opt/bbmap:${PATH}"
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    export TMPDIR=/var/tmp
+    mkdir -p /var/tmp
+    chmod 1777 /var/tmp
+    export TEMP=/var/tmp
+    export TMP=/var/tmp
+
+    # Define version variables at build time
+    export CUTADAPT_VERSION=1.18
+    export BIOPYTHON_VERSION=1.72
+    export FASTQC_VERSION=0.11.8
+
+    # Update package lists and install system dependencies
+    apt-get update && apt-get install -y --no-install-recommends \
+        vim-common \
+        openjdk-11-jdk \
+        python3-pip \
+        python3-dev \
+        build-essential \
+        cmake \
+        pkg-config \
+        wget \
+        unzip \
+        curl \
+        zlib1g-dev \
+        libbz2-dev \
+        liblzma-dev \
+        libncurses5-dev \
+        libncursesw5-dev \
+        libcurl4-gnutls-dev \
+        libgtextutils-dev \
+        libssl-dev \
+        libffi-dev \
+        libtbb2 \
+        libhdf5-dev \
+        git \
+        bash && \
+    ln -s /usr/bin/python3 /usr/bin/python && \
+    rm -rf /var/lib/apt/lists/*
+    
+    # Download and install gtextutils
+    wget https://github.com/agordon/libgtextutils/releases/download/0.7/libgtextutils-0.7.tar.gz
+    tar -xzvf libgtextutils-0.7.tar.gz
+    cd libgtextutils-0.7
+    ./configure && make && make install
+    cd ..
+
+    # Download and install fastx-toolkit
+    wget https://github.com/agordon/fastx_toolkit/releases/download/0.0.14/fastx_toolkit-0.0.14.tar.bz2
+    tar -xjf fastx_toolkit-0.0.14.tar.bz2
+    cd fastx_toolkit-0.0.14
+    ./configure && make && make install
+    cd ..
+
+    # Install Python dependencies
+    pip3 install --no-cache-dir cutadapt==$CUTADAPT_VERSION biopython==$BIOPYTHON_VERSION htseq bx-python RSeQC
+
+    # Install FastQC
+    wget https://www.bioinformatics.babraham.ac.uk/projects/fastqc/fastqc_v${FASTQC_VERSION}.zip && \
+    unzip fastqc_v${FASTQC_VERSION}.zip && \
+    rm fastqc_v${FASTQC_VERSION}.zip && \
+    chmod +x FastQC/fastqc && \
+    mv FastQC /opt/fastqc
+
+    # Install seqtk
+    git clone https://github.com/lh3/seqtk.git && \
+    cd seqtk && \
+    make && \
+    mv seqtk /usr/local/bin/
+
+    # Install Clumpify (BBMap package)
+    wget https://sourceforge.net/projects/bbmap/files/BBMap_38.94.tar.gz/download -O BBMap_38.94.tar.gz && \
+    tar -xzf BBMap_38.94.tar.gz && \
+    mv bbmap /opt/bbmap && \
+    rm BBMap_38.94.tar.gz
+
+    # Install Picard
+    wget https://github.com/broadinstitute/picard/releases/download/2.18.5/picard.jar && \
+    mkdir /opt/picard && \
+    mv picard.jar /opt/picard/
+
+    # Install BEDTools
+    wget https://github.com/arq5x/bedtools2/releases/download/v2.29.1/bedtools-2.29.1.tar.gz && \
+    tar -zxvf bedtools-2.29.1.tar.gz && \
+    cd bedtools2 && \
+    make && \
+    mv bin/* /usr/local/bin/ && \
+    rm -rf bedtools-2.27.1.tar.gz bedtools2
+
+    # Install SAMtools
+    wget https://github.com/samtools/samtools/releases/download/1.8/samtools-1.8.tar.bz2 && \
+    tar -xjf samtools-1.8.tar.bz2 && \
+    cd samtools-1.8 && \
+    ./configure --prefix=/usr/local && \
+    make && \
+    make install && \
+    rm -rf samtools-1.8.tar.bz2 samtools-1.8
+
+    # Install STAR
+    wget https://github.com/alexdobin/STAR/archive/2.7.11b.tar.gz && \
+    tar -xzf 2.7.11b.tar.gz && \
+    cd STAR-2.7.11b/source && \
+    make STAR && \
+    mv STAR /usr/local/bin/ && \
+    rm -rf 2.7.11b.tar.gz STAR-2.7.11b
+
+    # Install kallisto
+    git clone https://github.com/pachterlab/kallisto.git && \
+    cd kallisto && \
+    git checkout 5c5ee8a45d6afce65adf4ab18048b40d527fcf5c && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make && \
+    make install
+
+    # Cleanup
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+%runscript
+    exec bash
