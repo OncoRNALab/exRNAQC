@@ -11,10 +11,11 @@ This repository contains all the scripts and supplementary files required for pr
 4. [Usage](#usage)
     - [1. Build the Singularity images](#1-build-the-singularity-images)
     - [2. Run the containers](#2-run-the-containers)
-    - [3. Prepare input data](#3-prepare-input-data)
-    - [4. Update configuration files](#4-update-configuration-files)
-    - [5. Execute the preprocessing pipelines](#5-execute-the-preprocessing-pipelines)
-    - [6. Subsampling and Repeat Analysis](#6-Subsampling-and-Repeat-Analysis)
+    - [3. Build Indexes](#3-Build-Indexes)
+    - [4. Prepare input data](#4-prepare-input-data)
+    - [5. Update configuration files](#5-update-configuration-files)
+    - [6. Execute the preprocessing pipelines](#6-execute-the-preprocessing-pipelines)
+    - [7. Subsampling and Repeat Analysis](#7-Subsampling-and-Repeat-Analysis)
 5. [Output Folder Structure](#output-folder-structure)
 6. [License](#license)
 7. [Contact](#contact)
@@ -59,42 +60,6 @@ The repository is structured as follows:
 
 This is necessary to build and run the containers used for preprocessing.
 
-### 3. Build required files:
-
-1. STAR index (v2.7.11b)
-   
-The UCSC hg38.fa file was concatenated with ribosomal, spike-ins and chrIS fasta files to make the final fasta and gtf files for building the index. Spike, 
-
-```bash
-cat hg38.fa rDNA_2.fa ERCC92.fa chrIS.fa > GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa
-cat Homo_sapiens.GRCh38.100_ucsc-named.gtf ERCC92.gtf RNAsequins.v2.2.gtf > GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf
-```
-Build STAR index
-
-```bash
-STAR   --runMode genomeGenerate   \
-    --runThreadN 12 \
-    --genomeDir path/to/star_index  \
-    --genomeFastaFiles path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa \
-    --sjdbGTFfile path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf \
-    --sjdbOverhang 74   \
-    --genomeChrBinNbits 14 
-```
-
-2. Kallisto index
-
-Similarly, the fasta file for building the index was done concatenating Ensembl version 91 of the human genome, ERCC and Sequin spike sequences.
-
-```bash
-kallisto index -i path/to/index path/to/fast
-```
-3. Bowtie index
-
-Similarly, the UCSC hg38.fa with added spike-ins sequences was used to built the index. 
-
-```bash
-bowtie-build -f path/to/fasta path/to/index
-```
 ## Usage
 
 ### 1. Build the Singularity images
@@ -128,7 +93,48 @@ For **small RNA-seq** preprocessing:
 ```bash
 singularity run small.sif -mem 60000M
 ```
-### 3. Prepare input data
+### 3. Build Indexes:
+
+1. Extract files in the resource subdirectory
+```bash
+tar -xzvf resources_files.tar.gz 
+```
+3. STAR index (v2.7.11b)
+   
+The UCSC hg38.fa file was concatenated with ribosomal, spike-ins and chrIS fasta files to make the final fasta and gtf files for building the index. Spike, 
+
+```bash
+cat hg38.fa rDNA_2.fa ERCC92.fa chrIS.fa > GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa
+cat Homo_sapiens.GRCh38.100_ucsc-named.gtf ERCC92.gtf RNAsequins.v2.2.gtf > GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf
+```
+Build STAR index
+
+```bash
+STAR   --runMode genomeGenerate   \
+    --runThreadN 12 \
+    --genomeDir path/to/star_index  \
+    --genomeFastaFiles path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa \
+    --sjdbGTFfile path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf \
+    --sjdbOverhang 74   \
+    --genomeChrBinNbits 14 
+```
+
+2. Kallisto index
+
+Similarly, the fasta file for building the index was done concatenating Ensembl version 91 of the human genome, ERCC and Sequin spike sequences.
+
+```bash
+kallisto index -i path/to/index path/to/fast
+```
+3. Bowtie index
+
+Similarly, the UCSC hg38.fa with added spike-ins sequences was used to built the index. 
+
+```bash
+bowtie-build -f path/to/fasta path/to/index
+```
+
+### 4. Prepare input data
 
 Before running the main pipelines, create a text file containing the sample names and paths to the FASTQ files (paired-end or single-end). You can use the `get_sample_list.py` script to generate this file.
 
@@ -138,7 +144,7 @@ For example, to generate a sample list for small RNA data:
 python3 get_sample_list.py -i ../SmallRNA_DataTest/ -o ../SmallRNA_DataTest/
 ```
 
-### 4. Update configuration files
+### 5. Update configuration files
 
 Navigate to the `scripts` directory and review the YAML configuration files (`config_full.yaml` and `config_small.yaml`). You will need to:
 
@@ -152,7 +158,7 @@ cd scripts/
 
 Ensure that your sample list format matches the example in `file_list.txt`.
 
-### 5. Execute the preprocessing pipelines
+### 6. Execute the preprocessing pipelines
 
 Once everything is set up, you can run the pipelines as follows:
 
@@ -167,7 +173,7 @@ For **small RNA-seq**:
 ```bash
 python3 SmallRNA_preprocessing.py --config config_small.yaml
 ```
-### 6. Subsampling and Repeat Analysis
+### 7. Subsampling and Repeat Analysis
 
 1. Calculate the level of subsampling desired. Navigate to the output directory and run:
 
