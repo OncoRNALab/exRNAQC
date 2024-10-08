@@ -61,8 +61,9 @@ This is necessary to build and run the containers used for preprocessing.
 
 ### 3. Build required files:
 
-1. STAR index (STAR version: 2.7.11b)
-The UCSC hg38.fa file was concatenated with ribosomal, spike-ins and chrIS fasta files to make the final fasta and gtf files for building the index
+1. STAR index (v2.7.11b)
+   
+The UCSC hg38.fa file was concatenated with ribosomal, spike-ins and chrIS fasta files to make the final fasta and gtf files for building the index. Spike, 
 
 ```bash
 cat hg38.fa rDNA_2.fa ERCC92.fa chrIS.fa > GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa
