@@ -14,6 +14,7 @@ This repository contains all the scripts and supplementary files required for pr
     - [3. Prepare input data](#4-prepare-input-data)
     - [4. Update configuration files](#3-update-configuration-files)
     - [5. Execute the preprocessing pipelines](#5-execute-the-preprocessing-pipelines)
+    - [6. Subsampling and Repeat Analysis](#6Subsampling-and-Repeat-Analysis)
 5. [Output Folder Structure](#output-folder-structure)
 6. [License](#license)
 7. [Contact](#contact)
@@ -129,7 +130,7 @@ python3 SmallRNA_preprocessing.py --config config_small.yaml
 ```
 ### 6. Subsampling and Repeat Analysis
 
-1. Calculate the level of subsampling desired
+1. Calculate the level of subsampling desired. Navigate to the output directory and run:
 
 ```bash
 for sample in $(ls | grep "RNA0"); do qcfil_lines=`wc -l ${sample}/trimming/${sample}_1_trim_len_qc.fastq.gz`; echo $qcfil_lines $sample; done >> lines_fastq.txt
