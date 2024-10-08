@@ -87,7 +87,7 @@ This is necessary to build and run the containers used for preprocessing.
     kallisto index -i path/to/index path/to/fast
     ```
     3. Bowtie index
-    bash
+    
     ```bash
     bowtie-build -f path/to/fasta path/to/index
     ```
