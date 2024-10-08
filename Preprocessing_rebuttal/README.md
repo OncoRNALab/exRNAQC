@@ -127,6 +127,21 @@ For **small RNA-seq**:
 ```bash
 python3 SmallRNA_preprocessing.py --config config_small.yaml
 ```
+### 6. Subsampling and Repeat Analysis
+
+1. Calculate the level of subsampling desired
+
+```bash
+for sample in $(ls | grep "RNA0"); do qcfil_lines=`wc -l ${sample}/trimming/${sample}_1_trim_len_qc.fastq.gz`; echo $qcfil_lines $sample; done >> lines_fastq.txt
+sort -nk1 lines_fastq.txt | head
+```
+2. Add the number of reads for subsampling to the yaml config file.
+3. Change the repeat_analysis to yes in the config yaml file
+```
+subsample_to_nr: "700000:
+repeat_analysis: "yes"
+```
+5. Run the pipeline again.
 
 ## Output Folder Structure
 
