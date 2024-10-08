@@ -33,6 +33,7 @@ The repository is structured as follows:
 │   ├── get_sample_list.py       # Helper script to generate sample list
 │   └── ...                      # Additional scripts needed for the pipelines
 ├── resources/
+│   └── supl_files.tar.gz        # fasta files required for building the indexes
 │   └── ...                      # Annotation files required for preprocessing
 ├── FullRNA_DataTest/            # Test dataset for full RNA-seq pipeline
 ├── SmallRNA_DataTest/           # Test dataset for small RNA-seq pipeline
