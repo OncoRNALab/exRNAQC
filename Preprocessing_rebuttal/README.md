@@ -139,7 +139,7 @@ sort -nk1 lines_fastq.txt | head
 2. Add the number of reads for subsampling to the yaml config file.
 3. Change the repeat_analysis to yes in the config yaml file
 ```
-subsample_to_nr: "700000:
+subsample_to_nr: "700000"
 repeat_analysis: "yes"
 ```
 5. Run the pipeline again.
