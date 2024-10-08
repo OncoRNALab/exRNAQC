@@ -60,37 +60,39 @@ This is necessary to build and run the containers used for preprocessing.
 
 ### 3. Build required files:
 
-    1. STAR index (STAR version: 2.7.11b)
-    The UCSC hg38.fa file was concatenated with ribosomal, spike-ins and chrIS fasta files to make the final fasta and gtf files for building the index
-    
-    ```bash
-    cat hg38.fa rDNA_2.fa ERCC92.fa chrIS.fa > GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa
-    cat Homo_sapiens.GRCh38.100_ucsc-named.gtf ERCC92.gtf RNAsequins.v2.2.gtf > GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf
-    ```
-    Build STAR index
-    
-    ```bash
-    STAR   --runMode genomeGenerate   \
-        --runThreadN 12 \
-        --genomeDir path/to/star_index  \
-        --genomeFastaFiles path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa \
-        --sjdbGTFfile path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf \
-        --sjdbOverhang 74   \
-        --genomeChrBinNbits 14 
-    ```
-    
-    2. Kallisto index
-    
-    Similarly, the fasta file for building the index was done concatenating Ensembl version 91 of the human genome, ERCC and Sequin spike sequences.
-    
-    ```bash
-    kallisto index -i path/to/index path/to/fast
-    ```
-    3. Bowtie index
-    
-    ```bash
-    bowtie-build -f path/to/fasta path/to/index
-    ```
+1. STAR index (STAR version: 2.7.11b)
+The UCSC hg38.fa file was concatenated with ribosomal, spike-ins and chrIS fasta files to make the final fasta and gtf files for building the index
+
+```bash
+cat hg38.fa rDNA_2.fa ERCC92.fa chrIS.fa > GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa
+cat Homo_sapiens.GRCh38.100_ucsc-named.gtf ERCC92.gtf RNAsequins.v2.2.gtf > GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf
+```
+Build STAR index
+
+```bash
+STAR   --runMode genomeGenerate   \
+    --runThreadN 12 \
+    --genomeDir path/to/star_index  \
+    --genomeFastaFiles path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa \
+    --sjdbGTFfile path/to/GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf \
+    --sjdbOverhang 74   \
+    --genomeChrBinNbits 14 
+```
+
+2. Kallisto index
+
+Similarly, the fasta file for building the index was done concatenating Ensembl version 91 of the human genome, ERCC and Sequin spike sequences.
+
+```bash
+kallisto index -i path/to/index path/to/fast
+```
+3. Bowtie index
+
+Similarly, the UCSC hg38.fa with added spike-ins sequences was used to built the index. 
+
+```bash
+bowtie-build -f path/to/fasta path/to/index
+```
 ## Usage
 
 ### 1. Build the Singularity images
