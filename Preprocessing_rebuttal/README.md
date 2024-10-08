@@ -53,7 +53,7 @@ The repository is structured as follows:
 ### 1. Clone the repository:
    ```bash
    git clone https://github.com/OncoRNALab/exRNAQC.git
-   cd exRNAQC
+   cd exRNAQC/Preprocessing_rebuttal
    ```
 
 ### 2. Ensure you have [Singularity](https://sylabs.io/singularity/) installed on your system
@@ -80,7 +80,7 @@ singularity --debug build full.sif SingFullRNA.def
 
 ### 2. Run the containers
 
-Run the containers with sufficient memory (recommended: 60 GB).
+Run the containers with sufficient memory (60 GB).
 
 For **full RNA-seq** preprocessing:
 
@@ -97,6 +97,7 @@ singularity run small.sif -mem 60000M
 
 1. Extract files in the resource subdirectory
 ```bash
+cd resources/
 tar -xzvf resources_files.tar.gz 
 ```
 3. STAR index (v2.7.11b)
