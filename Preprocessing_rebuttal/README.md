@@ -133,8 +133,12 @@ python3 SmallRNA_preprocessing.py --config config_small.yaml
 1. Calculate the level of subsampling desired. Navigate to the output directory and run:
 
 ```bash
+#fullRNAseq
 for sample in $(ls | grep "RNA0"); do qcfil_lines=`wc -l ${sample}/trimming/${sample}_1_trim_len_qc.fastq.gz`; echo $qcfil_lines $sample; done >> lines_fastq.txt
 sort -nk1 lines_fastq.txt | head
+#smallRNAseq
+for sample in $(ls | grep "RNA0"); do qcfil_lines=`wc -l ${sample}/${sample}_qc.fastq.gz`; echo $qcfil_lines $sample; done >> lines_fastq.txt
+
 ```
 2. Add the number of reads for subsampling to the yaml config file.
 3. Change the repeat_analysis to yes in the config yaml file
