@@ -1,4 +1,5 @@
 ## Kit pre-experiment
-Analyses on RNA access data
-
+Analyses on RNA access data.
+Script to produce the subplots (a,c,e,g) in figure2 of the manuscript.
 Count file needed to run this analysis can be accessed in ArrayExpress accesion ID E-MTAB-10504
+
