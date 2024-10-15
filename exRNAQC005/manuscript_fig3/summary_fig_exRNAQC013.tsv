@@ -1,0 +1,51 @@
+Tube	variable	value	TubeType	study
+ACD-A	ALC	1.097583516477736	non-preservation	exRNAQC013
+Biomatrica	ALC	1.1074942744159026	preservation	exRNAQC013
+Citrate	ALC	1.0778921669668724	non-preservation	exRNAQC013
+DNA Streck	ALC	1.165901822948831	preservation	exRNAQC013
+EDTA	ALC	1.1246123434949424	non-preservation	exRNAQC013
+EDTA separator	ALC	1.107504940558521	non-preservation	exRNAQC013
+PAXgene	ALC	1.1827099819039706	preservation	exRNAQC013
+RNA Streck	ALC	1.1277554970019672	preservation	exRNAQC013
+Roche	ALC	1.0829559936827002	preservation	exRNAQC013
+serum	ALC	1.0687044162212378	non-preservation	exRNAQC013
+ACD-A	miRNAfract_FC	1.4333118772938422	non-preservation	exRNAQC013
+Biomatrica	miRNAfract_FC	1.3889048373893829	preservation	exRNAQC013
+Citrate	miRNAfract_FC	1.47976471087482	non-preservation	exRNAQC013
+DNA Streck	miRNAfract_FC	2.6991696318327514	preservation	exRNAQC013
+EDTA	miRNAfract_FC	1.2905430799192645	non-preservation	exRNAQC013
+EDTA separator	miRNAfract_FC	1.1314032938413667	non-preservation	exRNAQC013
+PAXgene	miRNAfract_FC	2.6486507612931387	preservation	exRNAQC013
+RNA Streck	miRNAfract_FC	4.524169155789846	preservation	exRNAQC013
+Roche	miRNAfract_FC	1.6548757635424165	preservation	exRNAQC013
+serum	miRNAfract_FC	1.2540871878840423	non-preservation	exRNAQC013
+ACD-A	miRNAcount_FC	1.2097523054867225	non-preservation	exRNAQC013
+Biomatrica	miRNAcount_FC	1.250179347251381	preservation	exRNAQC013
+Citrate	miRNAcount_FC	1.1170084111810634	non-preservation	exRNAQC013
+DNA Streck	miRNAcount_FC	1.6797631176022032	preservation	exRNAQC013
+EDTA	miRNAcount_FC	1.363931797851752	non-preservation	exRNAQC013
+EDTA separator	miRNAcount_FC	1.1907879353849757	non-preservation	exRNAQC013
+PAXgene	miRNAcount_FC	1.543053992134537	preservation	exRNAQC013
+RNA Streck	miRNAcount_FC	1.264531798897124	preservation	exRNAQC013
+Roche	miRNAcount_FC	1.0813888104791072	preservation	exRNAQC013
+serum	miRNAcount_FC	1.1039840167598747	non-preservation	exRNAQC013
+ACD-A	EndovsRC_FC	1.624010930708982	non-preservation	exRNAQC013
+Biomatrica	EndovsRC_FC	10.504042653685689	preservation	exRNAQC013
+Citrate	EndovsRC_FC	1.5735210929214085	non-preservation	exRNAQC013
+DNA Streck	EndovsRC_FC	4.071101862841007	preservation	exRNAQC013
+EDTA	EndovsRC_FC	2.971144120038182	non-preservation	exRNAQC013
+EDTA separator	EndovsRC_FC	1.8643888915513465	non-preservation	exRNAQC013
+PAXgene	EndovsRC_FC	3.5586370677898347	preservation	exRNAQC013
+RNA Streck	EndovsRC_FC	5.3856356816779645	preservation	exRNAQC013
+Roche	EndovsRC_FC	1.7509436564669392	preservation	exRNAQC013
+serum	EndovsRC_FC	1.6125576364610705	non-preservation	exRNAQC013
+ACD-A	hemolysis_FC	1.5588061878384458	non-preservation	exRNAQC013
+Biomatrica	hemolysis_FC	2.081170923013519	preservation	exRNAQC013
+Citrate	hemolysis_FC	2.0475210873637684	non-preservation	exRNAQC013
+DNA Streck	hemolysis_FC	1.1919791448583468	preservation	exRNAQC013
+EDTA	hemolysis_FC	1.886460289843958	non-preservation	exRNAQC013
+EDTA separator	hemolysis_FC	1.4274742153256514	non-preservation	exRNAQC013
+PAXgene	hemolysis_FC	1.3850673882637141	preservation	exRNAQC013
+RNA Streck	hemolysis_FC	1.6113058550445263	preservation	exRNAQC013
+Roche	hemolysis_FC	1.477730709302854	preservation	exRNAQC013
+serum	hemolysis_FC	1.0554982432533453	non-preservation	exRNAQC013
