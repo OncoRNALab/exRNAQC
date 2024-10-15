@@ -16,5 +16,6 @@ Data analyses: [exRNAQC013 html](https://github.com/OncoRNALab/exRNAQC/blob/main
 # Figures List 
 ## Main figures
 ## Sup. Figures
-- Figure 1: [exRNAQC004 html] (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.Rmd)
-- Figure 2: (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/FemtoPulseCorrelation.ipynb)
+- Figure 1: [exRNAQC004 html](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.Rmd)
+- Figure 2: [exRNAQC020 Correlation](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/FemtoPulseCorrelation.ipynb#entertaining-province)
+- Figure 4: [Panel A and C](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.Rmd#Filter-threshold)
