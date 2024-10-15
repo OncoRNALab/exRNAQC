@@ -16,5 +16,5 @@ Data analyses: [exRNAQC013 html](https://github.com/OncoRNALab/exRNAQC/blob/main
 # Figures List 
 ## Main figures
 ## Sup. Figures
-- Figure 1: (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.html)
-- Figure 2: (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/FemtoPulseCorrelation.html#Scatter-plots)
+- Figure 1: [exRNAQC004 html] (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.Rmd)
+- Figure 2: (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/FemtoPulseCorrelation.ipynb)
