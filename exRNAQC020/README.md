@@ -26,3 +26,7 @@ The ```tail``` command removes the first line of the junctions.bed file which ca
 
 ### Visualisation and statistical analysis
 We used R to generate the visualisations and perform statistical testing for changes in circRNA and linear RNA composition over time. You can find the analyses the accompanying HTML file.
+
+## Femto Pulse Correlations - Correlation between electrophoresis-based and sequencing-based eluate RNA concentrations
+
+Run the jupyter notebook FemtoPulseCorrelation.ipynb to reproduce **Suplementary Figure 2.**
