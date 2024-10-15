@@ -22,3 +22,6 @@ Tubes:
 For every metric used to compare kit-tube combinations, we tested the possibility of 
 interaction. We build a linear mixed-effects model with tube, RNA isolation kit and timelapse 
 as fixed effects and donorID as random effect.
+
+- Run the Rmarkdown repeated_measures_smallRNA.Rmd to reproduce the subplot (b) in Figure 6.
+- Run the Rmarkdown repeated_measures.Rmd to reproduce the subplot (a) in Figure 6.

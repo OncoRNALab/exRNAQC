@@ -23,9 +23,13 @@ require(tidyverse)
 library(pheatmap)
 require(RColorBrewer)
 
-color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","darkgray")
+names(color_panel)<-sort(c("serum","Biomatrica","EDTA separator","EDTA","Citrate","RNA Streck","Roche","DNA Streck", "PAXgene", "ACD-A"))
 
 set.seed(189672)
+theme_point<-theme_bw()+theme(strip.background = element_blank(), panel.background = element_rect(colour = "black", size=0.3))
+
+theme_point2<-theme(panel.background = element_rect(colour = "black", size=0.3), strip.background = element_blank())
 ```
 
 # Introduction
@@ -33,35 +37,7 @@ set.seed(189672)
 For every metric used to compare kit-tube combinations, we tested the possibility of interaction. We build a linear mixed-effects model with tube, RNA isolation kit and timelapse as fixed effects and donorID as random effect. The heteroscedasticity introduced by different RNAisolation kits was taken into account. 
 
 # Annotation
-
-Sample annotation with info about tube, kit, used input volume, eluate volume etc., volume unit is µL.
-
-```{r, warning=FALSE, message=FALSE}
-samples<-read_csv("./docs/Annotation_exRNAQC017_RNA-Exome_withHemolysis.csv")
-samples<-samples %>% mutate(donorID= case_when((Donor == "PNL-ZT37") ~ "D5",
-                                                                   (Donor == "PNL-RM7B") ~ "D1",
-                                                                   (Donor == "PNL-QJMM") ~ "D2",
-                                                                   (Donor == "PNL-2AAR") ~ "D3",
-                                                                   (Donor == "PNL-XNID") ~ "D4"), 
-                                                SampleID= paste0(GraphKit,"_",GraphTube,"_",TimeLapse,"_",donorID),
-                                                tube_kitID=paste0(GraphTube,"_",GraphKit),
-                                                tube_kit_timeID=paste0(GraphTube,"_",GraphKit,"_",TimeLapse),
-                                                PlasmaInputVml= PlasmaInputV/1000)
-
-DT::datatable(samples %>% dplyr::select(c("RNAID","donorID","RNAisolation","Tube","TimeLapse","PlasmaInputV","Sequinconc","EluateV","ERCCconc","RNAinputV", "Hemolysis",Abbrevation="GraphKit")), rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Sample annotation table")
-
-samples$Tube<-as.factor(samples$Tube)
-samples$RNAisolation<-as.factor(samples$RNAisolation)
-samples$TimeLapse<-as.factor(samples$TimeLapse)
-samples$donorID<-as.factor(samples$donorID)
-
-Tube.levels<-levels(samples$Tube)
-RNAisolation.levels<-levels(samples$RNAisolation)
-TimeLapse.levels<-levels(samples$TimeLapse)
-```
-
 # Sequencing and preprocessing
-
 ## Reads
 
 ```{r, warning=FALSE, message=FALSE}
@@ -289,6 +265,67 @@ confint(dupl_m.time_kit, adjust="mvt")
 
 We can conclude there is a small tube-kit and tube-time interaction; the serum tube at timepoint 16h seems to have more duplicates when extracted with the QIAamp kit. However, the difference is negligible.
 
+
+```{r}
+Dupl_m.kit<-emmeans(dupl_m1, ~Tube|RNAisolation)
+p_val.kit_dupl <- formatC(summary(pairs(Dupl_m.kit))$p.value, format="e", 2)
+
+Dupl_pwc.kit <-  dupl_stat %>% group_by(RNAisolation) %>% pairwise_t_test(duplicates ~ Tube) %>% add_xy_position(x = "Tube")
+Dupl_pwc.kit$p.adj <- p_val.kit_dupl
+Dupl_pwc.kit$p.adj <- as.numeric(Dupl_pwc.kit$p.adj)
+
+Dupl_pwc.kit$p.adj.signif <- ifelse(Dupl_pwc.kit$p.adj <= 0.001, "***", ifelse(Dupl_pwc.kit$p.adj<=0.01, "**", ifelse(Dupl_pwc.kit$p.adj<=0.05, "*", "ns")))
+
+Dupl_pwc.kit
+```
+
+```{r}
+Dupl.kit_plot<-ggplot(dupl_stat, aes(x = Tube, y = duplicates, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(RNAisolation)) +
+  stat_pvalue_manual(Dupl_pwc.kit, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "duplication")
+
+Dupl.kit_plot
+```
+
+```{r}
+Dupl_m.time<-emmeans(dupl_m1, ~Tube|TimeLapse)
+p_val.time_dupl <- formatC(summary(pairs(Dupl_m.time))$p.value, format="e", 2)
+
+Dupl_pwc.time <-  dupl_stat %>% group_by(TimeLapse) %>% pairwise_t_test(duplicates ~ Tube) %>% add_xy_position(x = "Tube")
+Dupl_pwc.time$p.adj <- p_val.time_dupl
+Dupl_pwc.time$p.adj <- as.numeric(Dupl_pwc.time$p.adj)
+Dupl_pwc.time$y.position[9]<-0.98
+
+Dupl_pwc.time$p.adj.signif <- ifelse(Dupl_pwc.time$p.adj <= 0.001, "***", ifelse(Dupl_pwc.time$p.adj<=0.01, "**", ifelse(Dupl_pwc.time$p.adj<=0.05, "*", "ns")))
+
+Dupl_pwc.time
+```
+```{r}
+Dupl.time_plot<-ggplot(dupl_stat, aes(x = Tube, y = duplicates, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(TimeLapse)) +
+  stat_pvalue_manual(Dupl_pwc.time, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point2 + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "duplication")
+
+Dupl.time_plot
+
+
+```
+
+
+
 ```{r}
 # # tried to make heatmap for p-values but result is not ok; should be left out
 # m_dupl.methods<-emmeans(m_dupl, ~Tube*RNAisolation|TimeLapse )
@@ -400,6 +437,65 @@ plot(EndovsSeq_m.time, comparisons=TRUE)
 pairs(EndovsSeq_m.time)
 confint(EndovsSeq_m.time,adjust="mvt")
 ```
+
+```{r}
+p_val.time_Conc <- formatC(summary(pairs(EndovsSeq_m.time))$p.value, format="e", 2)
+```
+
+```{r}
+Conc_pwc.time <-  conc_stat %>% group_by(TimeLapse) %>% pairwise_t_test(EndovsSeq ~ Tube) %>% add_xy_position(x = "Tube")
+Conc_pwc.time$p.adj <- p_val.time_Conc
+Conc_pwc.time$p.adj <- as.numeric(Conc_pwc.time$p.adj)
+Conc_pwc.time$p.adj.signif <- ifelse(Conc_pwc.time$p.adj <= 0.001, "***", ifelse(Conc_pwc.time$p.adj<=0.01, "**", ifelse(Conc_pwc.time$p.adj<=0.05, "*", "ns")))
+Conc_pwc.time
+```
+
+```{r}
+
+
+
+conc.Time_plot<-ggplot(conc_stat, aes(x = Tube, y = EndovsSeq, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(TimeLapse)) +
+  stat_pvalue_manual(Conc_pwc.time, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "RNA concentration")
+
+conc.Time_plot
+```
+
+```{r}
+EndovsSeq_m.kit<-emmeans(EndovsSeq_m3, ~Tube|RNAisolation)
+p_val.kit_Conc <- formatC(summary(pairs(EndovsSeq_m.kit))$p.value, format="e", 2)
+
+Conc_pwc.kit <-  conc_stat %>% group_by(RNAisolation) %>% pairwise_t_test(EndovsSeq ~ Tube) %>% add_xy_position(x = "Tube")
+Conc_pwc.kit$p.adj <- p_val.kit_Conc
+Conc_pwc.kit$p.adj <- as.numeric(Conc_pwc.kit$p.adj)
+Conc_pwc.kit$p.adj.signif <- ifelse(Conc_pwc.kit$p.adj <= 0.001, "***", ifelse(Conc_pwc.kit$p.adj<=0.01, "**", ifelse(Conc_pwc.kit$p.adj<=0.05, "*", "ns")))
+Conc_pwc.kit
+```
+
+```{r}
+conc.kit_plot<-ggplot(conc_stat, aes(x = Tube, y = EndovsSeq, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(RNAisolation)) +
+  stat_pvalue_manual(Conc_pwc.kit, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point2 + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "RNA concentration")
+
+conc.kit_plot
+
+```
+
+
 
 At timepoint 16h, we see a significantly higher endogenous/Sequin ratio in EDTA compared to other tubes.
 
@@ -515,6 +611,64 @@ confint(EndovsERCC_InputCorr_m.time,adjust="mvt")
 
 Both in the EDTA en citrate tubes there seems to be a significantly higher extraction efficiency at timepoint 16h.
 
+```{r}
+EndovsERCC_m.kit<-emmeans(EndovsERCC_InputCorr_m3, ~Tube|RNAisolation)
+p_val.kit_EndovsERCC <- formatC(summary(pairs(EndovsERCC_m.kit))$p.value, format="e", 2)
+
+EndovsERCC_pwc.kit <-  conc_stat %>% group_by(RNAisolation) %>% pairwise_t_test(EndovsERCC ~ Tube) %>% add_xy_position(x = "Tube")
+
+EndovsERCC_pwc.kit$p.adj <- p_val.kit_EndovsERCC
+EndovsERCC_pwc.kit$p.adj <- as.numeric(EndovsERCC_pwc.kit$p.adj)
+EndovsERCC_pwc.kit$p.adj.signif <- ifelse(EndovsERCC_pwc.kit$p.adj <= 0.001, "***", ifelse(EndovsERCC_pwc.kit$p.adj<=0.01, "**", ifelse(EndovsERCC_pwc.kit$p.adj<=0.05, "*", "ns")))
+EndovsERCC_pwc.kit
+```
+
+```{r}
+EndovsERCC.kit_plot<-ggplot(conc_stat, aes(x = Tube, y = EndovsERCC, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(RNAisolation)) +
+  stat_pvalue_manual(EndovsERCC_pwc.kit, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point2 + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "extraction efficiency")
+
+EndovsERCC.kit_plot
+```
+
+
+```{r}
+EndovsERCC_m.time<-emmeans(EndovsERCC_InputCorr_m3, ~Tube|TimeLapse)
+p_val.time_EndovsERCC <- formatC(summary(pairs(EndovsERCC_m.time))$p.value, format="e", 2)
+
+EndovsERCC_pwc.time <-  conc_stat %>% group_by(TimeLapse) %>% pairwise_t_test(EndovsERCC ~ Tube) %>% add_xy_position(x = "Tube")
+
+EndovsERCC_pwc.time$p.adj <- p_val.time_EndovsERCC
+EndovsERCC_pwc.time$p.adj <- as.numeric(EndovsERCC_pwc.time$p.adj)
+EndovsERCC_pwc.time$p.adj.signif <- ifelse(EndovsERCC_pwc.time$p.adj <= 0.001, "***", ifelse(EndovsERCC_pwc.time$p.adj<=0.01, "**", ifelse(EndovsERCC_pwc.time$p.adj<=0.05, "*", "ns")))
+EndovsERCC_pwc.time
+```
+
+```{r}
+EndovsERCC.time_plot<-ggplot(conc_stat, aes(x = Tube, y = EndovsERCC, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(TimeLapse)) +
+  stat_pvalue_manual(EndovsERCC_pwc.time, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "extraction efficiency")
+
+EndovsERCC.time_plot
+
+
+```
+
+
 # Gene count
 
 ## absolute numbers
@@ -603,12 +757,71 @@ ggplot(gene_stat, aes(x = Tube, y = genes_aboveTh, color = Tube)) +
 #ggsave("./data_output/plots/duplicates_stats.pdf", plot = ggplot2::last_plot(), dpi = 300)
 ```
 
+```{r}
+count_m.time<-emmeans(count_m3, ~Tube|TimeLapse)
+p_val.time_count <- formatC(summary(pairs(count_m.time))$p.value, format="e", 2)
+
+count_pwc.time <-  gene_stat %>% group_by(TimeLapse) %>% pairwise_t_test(genes_aboveTh ~ Tube) %>% add_xy_position(x = "Tube")
+
+count_pwc.time$p.adj <- p_val.time_count
+count_pwc.time$p.adj <- as.numeric(count_pwc.time$p.adj)
+count_pwc.time$p.adj.signif <- ifelse(count_pwc.time$p.adj <= 0.001, "***", ifelse(count_pwc.time$p.adj<=0.01, "**", ifelse(count_pwc.time$p.adj<=0.05, "*", "ns")))
+
+count_pwc.time
+```
+
+```{r}
+count.time_plot<-ggplot(gene_stat, aes(x = Tube, y = genes_aboveTh, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(TimeLapse)) +
+  stat_pvalue_manual(count_pwc.time, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point2 + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "sensitivity")
+
+count.time_plot
+```
+
+```{r}
+count_m.kit<-emmeans(count_m3, ~Tube|RNAisolation)
+p_val.kit_count <- formatC(summary(pairs(count_m.kit))$p.value, format="e", 2)
+
+count_pwc.kit <-  gene_stat %>% group_by(RNAisolation) %>% pairwise_t_test(genes_aboveTh ~ Tube) %>% add_xy_position(x = "Tube")
+
+count_pwc.kit$p.adj <- p_val.kit_count
+count_pwc.kit$p.adj <- as.numeric(count_pwc.kit$p.adj)
+count_pwc.kit$p.adj.signif <- ifelse(count_pwc.kit$p.adj <= 0.001, "***", ifelse(count_pwc.kit$p.adj<=0.01, "**", ifelse(count_pwc.kit$p.adj<=0.05, "*", "ns")))
+
+count_pwc.kit
+```
+
+```{r}
+count.kit_plot<-ggplot(gene_stat, aes(x = Tube, y = genes_aboveTh, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(RNAisolation)) +
+  stat_pvalue_manual(count_pwc.kit, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "sensitivity")
+
+count.kit_plot
+
+```
+
+
 # Area left of the curve (ALC)
 
 ```{r, warning=FALSE, message=FALSE}
 ALC <- read.csv('./data_output/ALC.csv',sep=",",header = TRUE)
 
 ALC[c("Tube","RNAisolation")] <- str_split_fixed(ALC$tube_kitID, "_", 2)
+ALC$Tube <- if_else(ALC$Tube=="CIT", "Citrate", if_else(ALC$Tube=="SER", "serum", "EDTA")) 
 ALC$Tube <- as.factor(ALC$Tube)
 ALC$RNAisolation <- as.factor(ALC$RNAisolation)
 ALC$TimePoint <- as.factor(ALC$TimePoint)
@@ -648,32 +861,109 @@ qqnorm(ALC_m1$residuals)
 qqline(ALC_m1$residuals)
 ```
 
+```{r}
+
+ALC_m.time<-emmeans(ALC_m2, ~Tube|TimePoint)
+p_val.time_ALC <- formatC(summary(pairs(ALC_m.time))$p.value, format="e", 2)
+
+ALC_pwc.time <-  ALC %>% group_by(TimePoint) %>% pairwise_t_test(ALC_calc ~ Tube) %>% add_xy_position(x = "Tube")
+
+ALC_pwc.time$p.adj <- p_val.time_ALC
+ALC_pwc.time$p.adj <- as.numeric(ALC_pwc.time$p.adj)
+ALC_pwc.time$p.adj.signif <- ifelse(ALC_pwc.time$p.adj <= 0.001, "***", ifelse(ALC_pwc.time$p.adj<=0.01, "**", ifelse(ALC_pwc.time$p.adj<=0.05, "*", "ns")))
+
+ALC_pwc.time
+```
+
+```{r}
+ALC.time_plot<-ggplot(ALC, aes(x = Tube, y = ALC_calc, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(TimePoint)) +
+  stat_pvalue_manual(ALC_pwc.time, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point2 + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "reproducibility")
+
+ALC.time_plot
+```
+
+```{r}
+ALC_m.kit<-emmeans(ALC_m2, ~Tube|RNAisolation)
+p_val.kit_ALC <- formatC(summary(pairs(ALC_m.kit))$p.value, format="e", 2)
+
+ALC_pwc.kit <-  ALC %>% group_by(RNAisolation) %>% pairwise_t_test(ALC_calc ~ Tube) %>% add_xy_position(x = "Tube")
+
+ALC_pwc.kit$p.adj <- p_val.kit_ALC
+ALC_pwc.kit$p.adj <- as.numeric(ALC_pwc.kit$p.adj)
+ALC_pwc.kit$p.adj.signif <- ifelse(ALC_pwc.kit$p.adj <= 0.001, "***", ifelse(ALC_pwc.kit$p.adj<=0.01, "**", ifelse(ALC_pwc.kit$p.adj<=0.05, "*", "ns")))
+
+ALC_pwc.kit
+```
+
+```{r}
+ALC.kit_plot<-ggplot(ALC, aes(x = Tube, y = ALC_calc, color=Tube)) +
+  geom_boxplot() +
+  geom_point(size=0.8) +
+  facet_wrap(~ as.factor(RNAisolation)) +
+  stat_pvalue_manual(ALC_pwc.kit, label = "{scales::pvalue(p.adj)}", hide.ns = T, size=3, bracket.size=0.2, tip.length = 0.01) +
+  scale_color_manual(values=color_panel)+
+  scale_fill_manual(values=color_panel)+
+  theme_point2 + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.position = 'none', axis.title.y = element_text(size=10))+
+  labs(y = "reproducibility")
+
+ALC.kit_plot
+
+```
+
+
+```{r}
+#
+
+full_kit2<-ggarrange(Dupl.kit_plot, conc.kit_plot, EndovsERCC.kit_plot, count.kit_plot, ALC.kit_plot, common.legend = T, align = c("hv"), ncol = 1, nrow = 5)
+
+ggsave("./data_output/Kits_full2.pdf", plot=full_kit2, dpi=300, height = 15, width = 4)
+
+full_time <- ggarrange(Dupl.time_plot, conc.Time_plot, EndovsERCC.time_plot, count.time_plot, ALC.time_plot, common.legend = T, align = c("hv"), ncol = 1, nrow = 5)
+
+ggsave("./data_output/Time_full.pdf", plot=full_time, dpi=300, height = 15, width = 6)
+
+
+full_plot <- ggarrange(full_kit2, full_time, ncol=2, common.legend = T)
+ggsave("./mRNA_Boxplots_full.pdf", plot=full_plot, dpi=300, height = 15, width = 8)
+```
+
 # conclusion
 
 For duplicates and gene count, we see a tube-kit interaction. For both metrics the serum tube combined with the QIAamp extraction kit seems to perform worse than the other combinations. For RNA concentration and extraction efficiency, there seems to be a tube-time interaction. The EDTA tube at timepoint 16h performs significantly better than other combinations. In case of Extraction efficiency, this is also the case with the citrate tube.
 
-```{r, warning=FALSE, message=FALSE}
+
+```{r}
 overview <- data.frame(row.names = c("Tube:RNAisolation","Tube:TimeLapse","RNAisolation:TimeLapse"), "duplicates"= anova_dupl_m1, "RNA conc (endoVSseq)" = anova_EndovsSeq_m1, "extraction efficiency" = anova_EndovsERCC_InputCorr_m1, "gene count" = anova_count_m1, "ALC" = anova_ALC_m1, check.names = FALSE)
 overview_t <- t(overview)
-# add row with which interaction was significant
-#significant <- data.frame("None","Serum-QIAamp","None","None","None","None", row.names = "significant")
-#names(significant) <- names(overview)
-#overview <- rbind(overview, significant)
-# table
-#DT::datatable(overview) %>%
-#  DT::formatStyle(3, target = "row") #fontWeight = styleEqual(3, "bold")
-# heatmap
-## apply different color for p < 0.05
-bk1 <- c(seq(0,0.04,by=0.01),0.049)
-bk2 <- c(seq(0.05,1,by=0.1))
-bk <- c(bk1,bk2)
-custom_palette <- c(colorRampPalette(colors = c("#F4A582"))(length(bk1)-1), colorRampPalette(colors = c('#F7F7F7'))(length(bk2)-1))
-pheatmap::pheatmap(overview_t,
-                   breaks = bk,
-                   display_numbers = T,
-                   color = custom_palette,
+
+#breaks for heatmap
+bk1 <- c(seq(0,0.051,by=0.005))
+
+#make color palette
+custom_palette = c(colorRampPalette(brewer.pal(n = 7, name =
+  "RdBu"))(20))
+custom_palette2 = c(custom_palette[1:10], 'white')
+
+#make matrix with labels for heatmap
+labels_tab <- overview_t
+labels_tab[labels_tab<0.001]<-"<0.001"
+
+#make heatmap
+phm<-pheatmap::pheatmap(overview_t,
+                   breaks = bk1,
+                   display_numbers = labels_tab,fontsize_number=11, number_color="black",
+                   color = custom_palette2,
                    angle_col = 45,
                    cluster_rows=FALSE, cluster_cols=FALSE)
+
+ggsave("./mRNAInteractions2.pdf", plot = phm, dpi = 300)
 ```
-
-

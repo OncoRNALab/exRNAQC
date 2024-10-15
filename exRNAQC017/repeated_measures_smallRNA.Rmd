@@ -39,7 +39,7 @@ require(ggrepel)
 require(gridExtra)
 require(ggExtra)
 require(DT)
-source("./HelperFunctions.R")
+source("../Resources/HelperFunctions.R")
 
 
 theme_point<-theme_bw()+theme(strip.background = element_blank())
