@@ -12,3 +12,10 @@ Data analyses: [exRNAQC005 html](https://github.com/OncoRNALab/exRNAQC/blob/main
 
 ### Small RNA seq
 Data analyses: [exRNAQC013 html](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC013/exRNAQC013.html)
+
+# Figures List 
+## Main figures
+## Sup. Figures
+- Figure 1: (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.html)
+- Figure 2: (https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/FemtoPulseCorrelation.html#Scatter-plots)
+
