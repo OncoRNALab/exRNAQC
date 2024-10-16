@@ -1,8 +1,10 @@
 # exRNAQC
 
-Quick access to HTML reports with results for each study: https://oncornalab.github.io/exRNAQC
+Quick access to HTML reports with results for each study and the list of figures: https://oncornalab.github.io/exRNAQC
 
 ## Full Length RNAseq
+- To run it in the HPC use latest script: RNASeq_preprocessing.py (see Preprocessing/FullLengthRNASeq)
+- To run it locally see instructions in Preprocessing_rebuttal
 ### Rationale
 Used for RNA access libraries, but with adaptations one can also use it for other library preps. Before starting the analysis you need to know if the data is stranded or unstranded and single or paired end sequenced. The latter, you will notice in the fastq files. If the strandedness is unsure, you can always load a STAR output file in IGV.
 
@@ -17,8 +19,8 @@ multiqc -f .
 ```
 
 ### Further processing
-See Rmarkdown files (exRNAQC004 and exRNAQC005). The annotation file needs to be made based on template (see example_annotation.csv in Resource folder). You may add extra columns on the right.
-	
+See Rmarkdown files (exRNAQC004 and exRNAQC005).
+
 You can download the data locally on your computer with RSync (PICARD_output.txt, .rds files for coverage analysis, abundance.tsv files for kallisto counts):
 ```
 Rsync -zvar --exclude="*gz" --exclude="*fa" --exclude="*sam" --exclude="*bam" --exclude="*/*srout*/_STAR*" --exclude="*/*srout*/Unmapped*" --exclude="*/fastqc*" hpc:/PATH .
@@ -26,11 +28,11 @@ Rsync -zvar --exclude="*gz" --exclude="*fa" --exclude="*sam" --exclude="*bam" --
 
 ## Small RNAseq
 ### Setup
-use latest script: smallRNASeq_preprocessing.py (see Preprocessing/SmallRNAseq)
-For more info on how to run it, look at README.md in same folder
+- To run it in the HPC use latest script: smallRNASeq_preprocessing.py (see Preprocessing/SmallRNAseq). For more info on how to run it, look at README.md in same folder
+- To run it locally see instructions in Preprocessing_rebuttal
 
 ### Further processing
-See Rmarkdown files (exRNAQC011 and exRNAQC013). Annotation files needed.
+See Rmarkdown files (exRNAQC011 and exRNAQC013).
 
 
 ## Preprocessing exceptions
