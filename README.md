@@ -3,14 +3,12 @@
 Quick access to HTML reports with results for each study and the list of figures: [https://oncornalab.github.io/exRNAQC](https://oncornalab.github.io/exRNAQC/)
 
 ## Full Length RNAseq
-- To run it in the HPC use latest script: RNASeq_preprocessing.py (see Preprocessing/FullLengthRNASeq)
-- To run it locally see instructions in Preprocessing_rebuttal
 ### Rationale
 Used for RNA access libraries, but with adaptations one can also use it for other library preps. Before starting the analysis you need to know if the data is stranded or unstranded and single or paired end sequenced. The latter, you will notice in the fastq files. If the strandedness is unsure, you can always load a STAR output file in IGV.
 
 ### Setup
-use latest script: RNASeq_preprocessing.py (see Preprocessing/FullLengthRNAseq)
-For more info on how to run it, look at README.md in same folder
+- To run it in the HPC use latest script: RNASeq_preprocessing.py (see Preprocessing/FullLengthRNASeq). For more info on how to run it, look at README.md in same folder
+- To run it locally see instructions in Preprocessing_rebuttal
 
 ### MultiQC
 For quality control, you can run MultiQC in the parent directory when the pipeline is finished.
