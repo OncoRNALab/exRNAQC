@@ -1,4 +1,7 @@
 # Phase 2
+Files with counts have been deposited in Array Expressed un der the accesion ID: 
+- exome sequencing: E-MTAB-10505
+- small sequencing: E-MTAB-12542
 
 ## exRNAQC017
 
@@ -16,6 +19,7 @@ Tubes:
 * EDTA
 * serum
 * citrate
+
 
 ## repeated measures analysis
 
