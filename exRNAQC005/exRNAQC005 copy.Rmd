@@ -64,8 +64,8 @@ full_nr <- format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
 
 options(scipen=10000)
 
+data_path <- "./data_raw/"
 # Global variables
-data_path <- "./data_raw"
 sample_annotation<-read_csv("./Annotation_exRNAQC005.csv")
 
 sample_annotation <- sample_annotation %>% filter(RunID == "RNaseH_Seq_SK_Biogazelle_Exomes")
@@ -74,6 +74,7 @@ sample_annotation<-sample_annotation %>% mutate(PlasmaInputVml= PlasmaInputV/100
 sample_annotation$TubeType <- ifelse(sample_annotation$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "Preservation", "Non-preservation")
 sample_annotation$GraphTube <- paste0(sample_annotation$GraphTube, "_", sample_annotation$TimeLapse)
 ```
+
 
 
 ```{r foldchangefunction}
@@ -248,7 +249,7 @@ The data can be further explored in the interactive plots. All data was rescaled
 This overview only contains the number of platelets in the "end fraction" (relative to whole blood), because we only used this in the RNA-seq experiment. The other plots give the evolution in the different fractions. 
 
 ```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
-platelets <- read_csv("https://www.dropbox.com/s/qqptbirs5i77nia/PlateletCountPrcts.csv?dl=1")
+platelets <- read_csv(paste0(data_path,"PlateletCounts.csv"))
 platelets$Tube <- gsub("Paxgene", "PAXgene", platelets$Tube)
 platelets$PlateletCountPrct <- as.numeric(platelets$PlateletCountPrct)*100
 platelets_PFP <- platelets %>% filter(Fraction == "PFP")
@@ -625,7 +626,7 @@ Pseudo-alignment rate with Kallisto v0.44 (to ensembl v91) is similar in most sa
 
 ```{r}
 
-kallisto_aligned <- read_tsv("../logs/20200116.RNaseH_Seq_SK_Biogazelle_Exomes/pipeline_multiqc_data/multiqc_data/multiqc_kallisto.txt")
+kallisto_aligned <- read_tsv(paste0(data_path, "multiqc_kallisto.txt"))
 kallisto_aligned <- kallisto_aligned %>% filter(Sample != "RNA004905L1-244333104_1_qc_subs_clumped")
 kallisto_aligned$`Sample` <- gsub("-.*", "", kallisto_aligned$`Sample`)
 
@@ -677,7 +678,7 @@ ggsave("./plots/duplicate_counts_after_dup.pdf", plot = ggplot2::last_plot(), dp
 Strandedness was calculated with RSeQC (version 2.6.4) for all samples. We can see that strandedness is substantially lower than the expected 100% in all DNA/RNA Streck tubes. We hypothesize that this could be due to incompatibility of the Streck preservation medium with the downstream DNase treatment of the RNA eluate. 
 
 ```{r}
-Strandedness = read.table(paste0(data_path, "RSeQC_output_overview.txt"),header=F)
+Strandedness = read.table(paste0(data_path, "RSeQC_output_nodedup.txt"),header=F)
 
 colnames(Strandedness) = c("sample_name","strandedness")
 Strandedness$sample_name <- gsub("-.*$","",Strandedness$sample_name)
@@ -775,15 +776,15 @@ In our samples, we add two types of spikes:
 The original spike-in concentrations are described in annotation files coming from the providers.
 
 ```{r spike annotation, warning=FALSE, message=FALSE}
-spike_conc_ERCC<-read_tsv("../../Resources/cms_095046.txt")
+spike_conc_ERCC<-read_tsv("../Resources/cms_095046.txt")
 colnames(spike_conc_ERCC)<-c("numb_id","spike_id","subgroup","mix1","mix2","FC","log2mix1mix2")
 spike_conc_ERCC<-spike_conc_ERCC[,c("spike_id","mix1")]
 
-spike_conc_Seq<-read_tsv("../../Resources/RNAsequins_isoform_mix.v2.2.tsv")
+spike_conc_Seq<-read_tsv("../Resources/RNAsequins_isoform_mix.v2.2.tsv")
 colnames(spike_conc_Seq)<-c("spike_id","length","mix1","mix2")
 spike_conc_Seq<-spike_conc_Seq[,c("spike_id","mix1")]
 
-spike_conc_gene_Seq<-read_tsv("../../Resources/RNAsequins_gene_mix.v2.2.tsv")
+spike_conc_gene_Seq<-read_tsv("../Resources/RNAsequins_gene_mix.v2.2.tsv")
 colnames(spike_conc_gene_Seq)<-c("spike_id","length","mix1","mix2")
 spike_conc_gene_Seq<-spike_conc_gene_Seq[,c("spike_id","mix1")]
 ```

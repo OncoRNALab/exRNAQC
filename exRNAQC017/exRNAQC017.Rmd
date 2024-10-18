@@ -81,7 +81,7 @@ library(multcomp)
 library(emmeans)
 
 set.seed(189672)
-source("./HelperFunctions.R")
+source("../Resources/HelperFunctions.R")
 
 # plot style
 theme_point<-theme_classic()+theme(strip.background = element_blank())
@@ -209,6 +209,7 @@ ggplot(samples_comb_exRNAQC005,aes(x=TimeLapse,y=Hemolysis, col=BasecampID, grou
 
 ## reads
 ```{r indexingQC, fig.cap="Indexing QC", fig.align="center", fig.height=5, fig.width=10}
+# count number of reads after each step of the pipeline
 reads_pre = read.table(paste0(data_path, "lines_fastq_pre.txt"),header=FALSE, col.names = c("pre", "RNAID")) 
 reads_qc = read.table(paste0(data_path, "lines_fastq_qc.txt"),header=FALSE, col.names = c("qc", "RNAID"))
 reads_subs = read.table(paste0(data_path, "lines_fastq_subs.txt"),header=FALSE, col.names = c("subs", "RNAID")) 

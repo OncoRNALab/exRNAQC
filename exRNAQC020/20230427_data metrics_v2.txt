@@ -1,0 +1,23 @@
+paper	author2	bloodtube	kits	mRNA	miRNA	time
+exRNAQC	exRNAQC 	10	8	21000	2000	3
+Srinivasan	Srinivasan et al. 	2	10	NA	2000	1
+Murray	Murray et al. 	6	3	NA	8	6
+Gahlawat	Gahlawat et al. 	5	1	NA	6	4
+Moret	Moret et al. 	1	3	NA	2000	1
+Wong	Wong et al. 	1	2	NA	2000	1
+Glinge	Glinge et al.	4	1	NA	3	3
+El-Khoury	El-Khoury et al. 	1	4	NA	760	1
+Page	Page et al. 	1	3	NA	377	2
+Tan	Tan et al. 	2	5	NA	8	1
+Meerson	Meerson et al.	1	6	NA	4	1
+Cheng	Cheng et al. 	2	1	NA	365	2
+Kloten	Kloten et al. 	1	5	NA	5	1
+McDonald	McDonald et al. 	2	4	NA	4	1
+Mitchell	Mitchell et al. 	2	1	NA	4	1
+Androvic	Androvic et al. 	2	1	NA	3	1
+Fernando	Fernando et al. 	2	1	4	NA	4
+Deleu	Deleu et al. 	2	5	4	NA	1
+Tsui	Tsui et al.	2	1	1	NA	1
+Feng	Feng et al. 	1	2	NA	2	1
+Kim	Kim et al. 	5	1	NA	2	1
+Sourvinou	Sourvinou et al. 	1	4	NA	2	1

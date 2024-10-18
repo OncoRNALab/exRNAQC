@@ -1,0 +1,183 @@
+---
+title: "DE_exRNAQC_Phase2"
+author: "Celine Everaert"
+date: "04/10/2021"
+output:
+  html_document:
+    code_folding: hide
+    highlight: kate
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(DESeq2)
+library(biomaRt)
+library("pheatmap")
+library(vsn)
+library(fgsea)
+
+# plot style
+theme_point<-theme_classic()+theme(strip.background = element_blank())
+theme_bar<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.line.x = element_blank())
+theme_boxplot<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank(),axis.line.x = element_blank(),legend.position = "none")
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
+color_panel1 <-  c("#039748","#039748","#ffbf00","#ffbf00","#e35d6a","#e35d6a","#5bb75b","#5bb75b","#428bca","#428bca","#23496b","#23496b","#cc2028","#cc2028","#e87810")
+```
+
+## Read in data
+
+Transcript count table to gene level.
+Selecting factors that impacted design.
+
+```{r data}
+counts <- read_tsv("kallisto_counts.tsv") # get matrix of count from ArrayExpress exRNAQC0017
+
+counts <- counts %>% mutate(ensembl_gene_id = case_when(
+    grepl("ENST",ensembl_transcript_id)~ensembl_gene_id,
+    grepl("ERCC",ensembl_transcript_id)~ensembl_transcript_id,
+    grepl("R[1,2]",ensembl_transcript_id, perl = TRUE)~sub("_[0-9]$","", ensembl_transcript_id, perl = TRUE),
+    TRUE~ensembl_gene_id))
+
+counts_genes <- counts %>% 
+  drop_na() %>% 
+  group_by(ensembl_gene_id) %>%
+  summarise_if(is.numeric, sum, na.rm=TRUE) %>% 
+  mutate_if(is.numeric, round) %>%
+  filter(!is.na(ensembl_gene_id))
+
+annotation <- read_csv("./Annotation_exRNAQC017.csv")
+
+design_matrix <- annotation %>% dplyr::select(RNAID, Donor, Tube, RNAisolation) %>% mutate(Donor= gsub("-","_", Donor)) %>% column_to_rownames("RNAID") %>% mutate_all(as_factor)
+```
+
+
+## Read in pathways
+
+```{r}
+pathways <- gmtPathways("./c7.all.v7.4.symbols.gmt.txt") # Can be downloaded from MSIGDB: c2.all.v7.4.symbols.gmt
+```
+
+
+## Obtain gene information
+
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+genes_ens <- getBM(attributes=c('ensembl_gene_id','hgnc_symbol','description','percentage_gene_gc_content'),mart=ensembl)
+genes_length <- getBM(attributes=c('ensembl_gene_id','transcript_length'),mart=ensembl) %>% group_by(ensembl_gene_id) %>% summarise(mediantranscriptlength = median(transcript_length))
+```
+
+## Perform DE DEseq2 - no spike normalisation
+
+```{r}
+counts_spike_filtered <- counts_genes %>% filter(grepl("ENSG",ensembl_gene_id)) %>%column_to_rownames("ensembl_gene_id")
+
+keep <- rowSums(counts(dds)) >= 100
+counts_spike_filtered <- counts_spike_filtered[keep,]
+  
+dds <- DESeqDataSetFromMatrix(countData = as.matrix(counts_spike_filtered),
+                              colData = design_matrix,
+                              design= ~ Donor + Tube + RNAisolation)
+dds <- DESeq(dds)
+
+ntd <- normTransform(dds)
+
+meanSdPlot(assay(ntd))
+
+select <- order(rowMeans(counts(dds,normalized=TRUE)),
+                decreasing=TRUE)[1:100]
+df <- as.data.frame(colData(dds)[,c("Donor","Tube","RNAisolation")])
+pheatmap(assay(ntd)[select,], cluster_rows=FALSE, show_rownames=FALSE, cluster_cols=FALSE, annotation_col = df)
+
+sampleDists <- dist(t(assay(ntd)))
+library("RColorBrewer")
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(ntd$RNAisolation, ntd$Tube, ntd$Donor, sep="-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+plotPCA(ntd, intgroup=c("RNAisolation", "Tube"))
+
+```
+
+### kit comparison simple model
+
+```{r deseq rnaisolation}
+res <- results(dds, contrast=c("RNAisolation","miRNeasySPkit","QIAamp"))
+results_kit <- as.tibble(res)
+results_kit$ensembl_gene_id <- rownames(counts_spike_filtered)
+
+results_kit <- left_join(results_kit, genes_ens)
+results_kit <- left_join(results_kit, genes_length)
+
+results_kit <- results_kit %>% mutate(significant = ifelse(abs(log2FoldChange)>2 & padj<0.05, "yes", "no"))
+ggplot(results_kit, aes(x=log2FoldChange, y=-log10(pvalue), color=significant))+
+  geom_point()+
+  theme_point
+
+fgseaRes <- fgsea(pathways = examplePathways, 
+                  stats    = exampleRanks,
+                  minSize  = 15,
+                  maxSize = 300)
+
+```
+
+### tube comparison simple model
+
+```{r deseq tube serum citrate}
+res <- results(dds, contrast=c("Tube","serum","Citrate"))
+results_tube_svsc <- as.tibble(res)
+results_tube_svsc$ensembl_gene_id <- rownames(counts_spike_filtered)
+
+results_tube_svsc  <- left_join(results_tube_svsc, genes_ens)
+results_tube_svsc  <- left_join(results_tube_svsc, genes_length)
+
+results_tube_svsc  <- results_tube_svsc %>% mutate(significant = ifelse(abs(log2FoldChange)>2 & padj<0.05, "yes", "no"))
+ggplot(results_tube_svsc, aes(x=log2FoldChange, y=-log10(pvalue), color=significant))+
+  geom_point()+
+  theme_point
+
+ranks <- setNames(results_tube_svsc$stat, results_tube_svsc$hgnc_symbol)
+fgseaRes_svsc <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+```
+
+```{r deseq tube serum edta}
+res <- results(dds, contrast=c("Tube","serum","EDTA"))
+results_tube_svse <- as.tibble(res)
+results_tube_svse$ensembl_gene_id <- rownames(counts_spike_filtered)
+
+results_tube_svse  <- left_join(results_tube_svse, genes_ens)
+results_tube_svse  <- left_join(results_tube_svse, genes_length)
+
+results_tube_svse  <- results_tube_svse %>% mutate(significant = ifelse(abs(log2FoldChange)>2 & padj<0.05, "yes", "no"))
+ggplot(results_tube_svse, aes(x=log2FoldChange, y=-log10(pvalue), color=significant))+
+  geom_point()+
+  theme_point
+```
+
+```{r deseq tube citrate edta}
+res <- results(dds, contrast=c("Tube","Citrate","EDTA"))
+results_tube_cvse <- as.tibble(res)
+results_tube_cvse$ensembl_gene_id <- rownames(counts_spike_filtered)
+
+results_tube_cvse  <- left_join(results_tube_cvse, genes_ens)
+results_tube_cvse  <- left_join(results_tube_cvse, genes_length)
+
+results_tube_cvse  <- results_tube_cvse %>% mutate(significant = ifelse(abs(log2FoldChange)>2 & padj<0.05, "yes", "no"))
+ggplot(results_tube_cvse, aes(x=log2FoldChange, y=-log10(pvalue), color=significant))+
+  geom_point()+
+  theme_point
+```
+
+
+

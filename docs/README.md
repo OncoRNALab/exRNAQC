@@ -27,7 +27,7 @@ Data analyses: [exRNAQC013 html](https://github.com/OncoRNALab/exRNAQC/blob/main
         - F: Section 4.6.2 Overview ALC
         - H: Section 4.7.2 Comparison of kits
 - Figure 3 in [Figure_3.R](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC005/manuscript_fig3/Figure_3.R)
-- Figure 4:
+- Figure 4 in [0_heatmap.R](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/0_heatmap.R)
 - Figure 5:
     - A: Section 5 Selection for phase 2 in in [exRNAQC004.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.Rmd)
     - B: Section 5 Selection for phase 2 in [exRNAQC011.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC011/exRNAQC011.Rmd)
@@ -66,9 +66,8 @@ Data analyses: [exRNAQC013 html](https://github.com/OncoRNALab/exRNAQC/blob/main
     - D: Section 8.2 Evolution of miRNAs fraction
     - E: Section 9 Area left of the curve (ALC)
 - Figure 11 in [exRNAQC020.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/circRNA_analysis.html)
-- Figure 12:  
-- Figure 13: 
-- Figure 14:
+- Figure 12 and 13 in [DE_FGSEA_Analyses.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC017/DE_FGSEA_Analyses.Rmd)
+- Figure 14 in [1_NEW_HEATMAP.R](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/1_NEW_HEATMAP.R)
 - Figure 15 in [repeated_measures.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC017/repeated_measures.Rmd)
 - Figure 16 in [repeated_measures_smallRNA.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC017/repeated_measures_smallRNA.Rmd)
 

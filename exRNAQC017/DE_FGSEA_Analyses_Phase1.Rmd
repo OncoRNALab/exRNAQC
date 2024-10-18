@@ -1,0 +1,3440 @@
+---
+title: "DE_exRNAQC_Tube_Study"
+author: "Celine Everaert"
+date: "22/12/2021"
+output:
+  html_document:
+    code_folding: hide
+    highlight: kate
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+    df_print: paged
+---
+
+# Prepare analysis
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(DESeq2)
+library(limma)
+library(biomaRt)
+library("pheatmap")
+library(vsn)
+library(fgsea)
+library(plotly) 
+library(umap)
+library("RColorBrewer")
+library(ggrepel)
+library(edgeR)
+library(DT)
+set.seed(1234)
+
+# plot style
+theme_point<-theme_classic()+theme(strip.background = element_blank())
+theme_bar<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.line.x = element_blank())
+theme_boxplot<-theme_classic()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank(),axis.line.x = element_blank(),legend.position = "none")
+color_panel<-c("#e35d6a","#5bb75b","#428bca","#e87810","#23496b","#ffbf00","#cc2028","#039748","pink","gray","darkgray")
+color_panel1 <-  c("#039748","#039748","#ffbf00","#ffbf00","#e35d6a","#e35d6a","#5bb75b","#5bb75b","#428bca","#428bca","#23496b","#23496b","#cc2028","#cc2028","#e87810")
+
+color_panel2 <-  brewer.pal(10, name = "Paired")
+names(color_panel2) <- c("serum","Biomatrica","EDTA_separator","EDTA","Citrate","RNA_Streck","Roche","DNA_Streck", "PAXgene", "ACD_A")
+```
+
+## Read in gene level data and annotation
+
+We make use of the subsampled kallisto data.
+
+```{r data}
+counts <- read_tsv("exRNAQC005_raw_counts.tsv") %>% drop_na() # get count file exRNAQC005 from ArrayExpress
+counts <- counts %>% filter(ensembl_gene_id != "rDNA45S") %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric,sum, na.rm=TRUE) %>% mutate_if(is.numeric, round)
+
+counts_phase2 <- read_tsv("kallisto_counts.tsv") %>% filter(ensembl_gene_id != "rDNA45S") %>% group_by(ensembl_gene_id) %>% summarise_if(is.numeric,sum, na.rm=TRUE) %>% mutate_if(is.numeric, round) #Kallisto counts exRNAQC017 from ArrayExpress
+
+sample_annotation <- read_csv("../exRNAQC005/Annotation_exRNAQC005.csv") %>% mutate(Tube= gsub("-| ","_",Tube, perl=TRUE))
+
+sample_annotation <- sample_annotation %>% filter(RunID == "RNaseH_Seq_SK_Biogazelle_Exomes")
+sample_annotation<-sample_annotation %>% mutate(SampleID= paste0(GraphTube,"_",BiologicalReplicate, "_",TimeLapse))
+sample_annotation$TubeType <- ifelse(sample_annotation$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+sample_annotation$GraphTube <- paste0(sample_annotation$GraphTube, "_", sample_annotation$TimeLapse)
+
+sample_annotation_phase2 <- read_csv("Annotation_exRNAQC017_RNA_Exome.csv") %>% mutate(Tube= gsub("-| ","_",Tube, perl=TRUE))
+
+sample_annotation_phase2<-sample_annotation_phase2 %>% mutate(SampleID= paste0(GraphTube,"_",TechnicalReplicate, "_",TimeLapse))
+sample_annotation_phase2$TubeType <- ifelse(sample_annotation_phase2$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
+sample_annotation_phase2$GraphTube <- paste0(sample_annotation_phase2$GraphTube, "_", sample_annotation_phase2$TimeLapse)
+```
+
+## Read in pathways
+
+From MSIGDB the KEGG, BIOCARTA and REACTOME pathways were collected. These are the pathways we will test for. GSEA is performed with the fgsea package, ranking the genes based on the t-value coming from edgeR.
+
+```{r}
+pathways <- gmtPathways("GMTfiles/c2.all.v7.4.symbols.gmt.txt")
+pathways <- pathways[grep("KEGG|BIOCARTA|REACTOME",names(pathways))]
+```
+
+## Obtain gene information
+
+To convert ensembl gene ids to HGNC symbols, biomart is loaded. This conversion is needed for the pathway testing and interpretation.
+
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+genes_ens <- getBM(attributes=c('ensembl_gene_id','hgnc_symbol','description','percentage_gene_gc_content'),mart=ensembl)
+genes_length <- getBM(attributes=c('ensembl_gene_id','transcript_length'),mart=ensembl) %>% 
+  group_by(ensembl_gene_id) %>% 
+  summarise(mediantranscriptlength = median(transcript_length))
+```
+
+## Create overview table
+
+```{r}
+DE_genes_table <- tibble()
+DE_pathways_table <- tibble()
+```
+
+# DE analysis Phase 1 Tubes at timepoint 0
+
+## Perform DE Limma - no spike normalisation
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0. The data was filtered for those genes that were expressed in at least one tube with minimum 10 counts for all three replicates. The filtered data was normalized with Limma voom.
+
+```{r}
+annotation_T0 <- sample_annotation %>% filter(TimeLapse=="T0")
+
+counts_spike_filtered_T0 <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_T0$UniqueID])
+
+design_matrix <- annotation_T0  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_T0)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + Tube, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_T0) >= 30
+counts_spike_filtered_T0 <- counts_spike_filtered_T0[keep,]
+keep <- apply(counts_spike_filtered_T0, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_T0 <- counts_spike_filtered_T0[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_T0  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_T0) %>% group_by(Tube, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_T0 <- counts_spike_filtered_T0[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_T0))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+Normalised log CPM of the timepoint 0 data were used to visualise.
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_timepoint0.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+tube.umap <- umap(t(counts_normalized), n_components=2, random_stat=15)
+
+ggplot(left_join(rownames_to_column(as.data.frame(tube.umap$layout),"UniqueID"), sample_annotation), aes(x=V1,y=V2, color=Tube))+
+  geom_point()+
+  theme_point + scale_color_manual(values=color_panel2)
+
+ggplot(left_join(rownames_to_column(as.data.frame(tube.umap$layout),"UniqueID"), sample_annotation), aes(x=V1,y=V2, color=Donor))+
+  geom_point()+
+  theme_point + scale_color_manual(values=color_panel)
+
+res.pca <- prcomp(t(counts_normalized))
+
+as.data.frame(res.pca$sdev) %>% mutate(dimension=rank(-`res.pca$sdev`)) %>%
+  ggplot(aes(x=dimension,y=`res.pca$sdev`))+
+  geom_col()+
+  theme_point
+
+left_join(rownames_to_column(as.data.frame(res.pca$x),"UniqueID"), sample_annotation) %>%
+  ggplot(aes(x=PC1,y=PC2, color=Tube))+
+  geom_point()+
+  theme_point
+```
+
+### EDTA vs Citrate
+
+```{r}
+
+contr <- makeContrasts(TubeCitrate - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsCitrate <- as.data.frame(res)
+results_EDTAvsCitrate <- rownames_to_column(results_EDTAvsCitrate,"ensembl_gene_id")
+
+results_EDTAvsCitrate <- left_join(results_EDTAvsCitrate, genes_ens)
+results_EDTAvsCitrate <- left_join(results_EDTAvsCitrate, genes_length)
+
+results_EDTAvsCitrate <- results_EDTAvsCitrate %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsCitrate %>% mutate(contrast="EDTAvsCitrate"))
+datatable(results_EDTAvsCitrate %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsCitrate, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsCitrate %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAvsCitrate$logFC, results_EDTAvsCitrate$hgnc_symbol)
+fgseaRes_EDTAvsCitrate <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsCitrate %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsCitrate"))
+```
+
+### EDTA vs EDTA separator
+
+```{r}
+contr <- makeContrasts(TubeEDTA_separator - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsseparator <- as.data.frame(res)
+results_EDTAvsseparator <- rownames_to_column(results_EDTAvsseparator,"ensembl_gene_id")
+
+results_EDTAvsseparator <- left_join(results_EDTAvsseparator, genes_ens)
+results_EDTAvsseparator <- left_join(results_EDTAvsseparator, genes_length)
+
+results_EDTAvsseparator <- results_EDTAvsseparator %>%
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsseparator %>% mutate(contrast="EDTAvsEDTA_separator"))
+datatable(results_EDTAvsseparator %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsseparator, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsseparator %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAvsseparator$logFC, results_EDTAvsseparator$hgnc_symbol)
+fgseaRes_EDTAvsseparator <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsseparator %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=5)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsEDTA_separator"))
+```
+
+### EDTA vs ACD_A
+
+```{r}
+contr <- makeContrasts(TubeACD_A - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsACDA <- as.data.frame(res)
+results_EDTAvsACDA <- rownames_to_column(results_EDTAvsACDA ,"ensembl_gene_id")
+
+results_EDTAvsACDA <- left_join(results_EDTAvsACDA, genes_ens)
+results_EDTAvsACDA <- left_join(results_EDTAvsACDA, genes_length)
+
+results_EDTAvsACDA <- results_EDTAvsACDA %>%
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsACDA %>% mutate(contrast="EDTAvsACD_A"))
+datatable(results_EDTAvsACDA %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsACDA, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsACDA %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAvsACDA$logFC, results_EDTAvsACDA$hgnc_symbol)
+fgseaRes_EDTAvsACDA <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsACDA %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=5)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsACD_A"))
+```
+
+
+### EDTA vs Biomatrica
+
+```{r}
+contr <- makeContrasts(TubeBiomatrica - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsBiomatrica <- as.data.frame(res)
+results_EDTAvsBiomatrica <- rownames_to_column(results_EDTAvsBiomatrica ,"ensembl_gene_id")
+
+results_EDTAvsBiomatrica <- left_join(results_EDTAvsBiomatrica, genes_ens)
+results_EDTAvsBiomatrica <- left_join(results_EDTAvsBiomatrica, genes_length)
+
+results_EDTAvsBiomatrica <- results_EDTAvsBiomatrica %>%
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsBiomatrica %>% mutate(contrast="EDTAvsBiomatrica"))
+datatable(results_EDTAvsBiomatrica %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsBiomatrica, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsBiomatrica %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAvsBiomatrica$logFC, results_EDTAvsBiomatrica$hgnc_symbol)
+fgseaRes_EDTAvsBiomatrica <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsBiomatrica %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=5)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsBiomatrica"))
+```
+
+
+### EDTA vs RNA_Streck
+
+```{r}
+contr <- makeContrasts(TubeRNA_Streck - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsRNAStreck <- as.data.frame(res)
+results_EDTAvsRNAStreck <- rownames_to_column(results_EDTAvsRNAStreck,"ensembl_gene_id")
+
+results_EDTAvsRNAStreck <- left_join(results_EDTAvsRNAStreck, genes_ens)
+results_EDTAvsRNAStreck <- left_join(results_EDTAvsRNAStreck, genes_length)
+
+results_EDTAvsRNAStreck <- results_EDTAvsRNAStreck %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsRNAStreck %>% mutate(contrast="EDTAvsRNA_Streck"))
+datatable(results_EDTAvsRNAStreck %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsRNAStreck , aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsRNAStreck %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+```
+
+```{r}
+topgenes_plot <- left_join(left_join(pivot_longer(rownames_to_column(as.data.frame(t(counts_normalized[results_EDTAvsRNAStreck$ensembl_gene_id[1:10],])),"UniqueID"), cols=-UniqueID,names_to="ensembl_gene_id",values_to="normalised_count"),sample_annotation) %>% filter(Tube %in% c("EDTA", "RNA_Streck")),genes_ens)
+
+ggplot(topgenes_plot,aes(x=Tube,y=normalised_count))+
+  geom_point()+
+  facet_wrap(~hgnc_symbol, scales="free_y")+
+  theme_point
+```
+
+```{r}
+ranks <- setNames(results_EDTAvsRNAStreck$logFC, results_EDTAvsRNAStreck$hgnc_symbol)
+fgseaRes_EDTAvsRNAStreck <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsRNAStreck %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsRNA_Streck"))
+```
+
+### EDTA vs DNA_Streck
+
+```{r}
+contr <- makeContrasts(TubeDNA_Streck - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsDNAStreck <- as.data.frame(res)
+results_EDTAvsDNAStreck <- rownames_to_column(results_EDTAvsDNAStreck,"ensembl_gene_id")
+
+results_EDTAvsDNAStreck <- left_join(results_EDTAvsDNAStreck, genes_ens)
+results_EDTAvsDNAStreck <- left_join(results_EDTAvsDNAStreck, genes_length)
+
+results_EDTAvsDNAStreck <- results_EDTAvsDNAStreck %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsDNAStreck %>% mutate(contrast="EDTAvsDNA_Streck"))
+datatable(results_EDTAvsDNAStreck %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsDNAStreck , aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsDNAStreck %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+
+topgenes_plot <- left_join(left_join(pivot_longer(rownames_to_column(as.data.frame(t(counts_normalized[results_EDTAvsDNAStreck$ensembl_gene_id[1:10],])),"UniqueID"), cols=-UniqueID,names_to="ensembl_gene_id",values_to="normalised_count"),sample_annotation) %>% filter(Tube %in% c("EDTA", "DNA_Streck")),genes_ens)
+
+ggplot(topgenes_plot,aes(x=Tube,y=normalised_count))+
+  geom_point()+
+  facet_wrap(~hgnc_symbol, scales="free_y")+
+  theme_point
+```
+
+```{r}
+ranks <- setNames(results_EDTAvsDNAStreck$logFC, results_EDTAvsDNAStreck$hgnc_symbol)
+fgseaRes_EDTAvsDNAStreck <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsDNAStreck %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsDNA_Streck"))
+```
+
+### EDTA vs PAXgene
+
+```{r}
+contr <- makeContrasts(TubePAXgene - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsPAXgene <- as.data.frame(res)
+results_EDTAvsPAXgene <- rownames_to_column(results_EDTAvsPAXgene,"ensembl_gene_id")
+
+results_EDTAvsPAXgene <- left_join(results_EDTAvsPAXgene, genes_ens)
+results_EDTAvsPAXgene <- left_join(results_EDTAvsPAXgene, genes_length)
+
+results_EDTAvsPAXgene <- results_EDTAvsPAXgene %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsPAXgene %>% mutate(contrast="EDTAvsPAXgene"))
+datatable(results_EDTAvsPAXgene %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsPAXgene , aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsPAXgene %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+
+topgenes_plot <- left_join(left_join(pivot_longer(rownames_to_column(as.data.frame(t(counts_normalized[results_EDTAvsPAXgene$ensembl_gene_id[1:10],])),"UniqueID"), cols=-UniqueID,names_to="ensembl_gene_id",values_to="normalised_count"),sample_annotation) %>% filter(Tube %in% c("EDTA", "PAXgene")),genes_ens)
+
+ggplot(topgenes_plot,aes(x=Tube,y=normalised_count))+
+  geom_point()+
+  facet_wrap(~hgnc_symbol, scales="free_y")+
+  theme_point
+```
+
+```{r}
+ranks <- setNames(results_EDTAvsPAXgene$logFC, results_EDTAvsPAXgene$hgnc_symbol)
+fgseaRes_EDTAvsPAXgene <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsPAXgene %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsPAXgene"))
+```
+
+### EDTA vs Roche
+
+```{r}
+contr <- makeContrasts(TubeRoche - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsRoche <- as.data.frame(res)
+results_EDTAvsRoche <- rownames_to_column(results_EDTAvsRoche,"ensembl_gene_id")
+
+results_EDTAvsRoche <- left_join(results_EDTAvsRoche, genes_ens)
+results_EDTAvsRoche <- left_join(results_EDTAvsRoche, genes_length)
+
+results_EDTAvsRoche <- results_EDTAvsRoche %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsRoche %>% mutate(contrast="EDTAvsRoche"))
+datatable(results_EDTAvsRoche %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsRoche , aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsRoche %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+
+topgenes_plot <- left_join(left_join(pivot_longer(rownames_to_column(as.data.frame(t(counts_normalized[results_EDTAvsRoche$ensembl_gene_id[1:10],])),"UniqueID"), cols=-UniqueID,names_to="ensembl_gene_id",values_to="normalised_count"),sample_annotation) %>% filter(Tube %in% c("EDTA", "Roche")),genes_ens)
+
+ggplot(topgenes_plot,aes(x=Tube,y=normalised_count))+
+  geom_point()+
+  facet_wrap(~hgnc_symbol, scales="free_y")+
+  theme_point
+```
+
+```{r}
+ranks <- setNames(results_EDTAvsRoche$logFC, results_EDTAvsRoche$hgnc_symbol)
+fgseaRes_EDTAvsRoche <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsRoche %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsRoche"))
+```
+
+### EDTA vs serum
+
+```{r}
+contr <- makeContrasts(Tubeserum - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsserum <- as.data.frame(res)
+results_EDTAvsserum <- rownames_to_column(results_EDTAvsserum,"ensembl_gene_id")
+
+results_EDTAvsserum <- left_join(results_EDTAvsserum, genes_ens)
+results_EDTAvsserum <- left_join(results_EDTAvsserum, genes_length)
+
+results_EDTAvsserum <- results_EDTAvsserum %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsserum %>% mutate(contrast="EDTAvsserum"))
+datatable(results_EDTAvsserum %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsserum , aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsserum %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  scale_color_manual(values=color_panel)
+
+topgenes_plot <- left_join(left_join(pivot_longer(rownames_to_column(as.data.frame(t(counts_normalized[results_EDTAvsserum$ensembl_gene_id[1:10],])),"UniqueID"), cols=-UniqueID,names_to="ensembl_gene_id",values_to="normalised_count"),sample_annotation) %>% filter(Tube %in% c("EDTA", "serum")),genes_ens)
+
+ggplot(topgenes_plot,aes(x=Tube,y=normalised_count))+
+  geom_point()+
+  facet_wrap(~hgnc_symbol, scales="free_y")+
+  theme_point
+```
+
+```{r}
+ranks <- setNames(results_EDTAvsserum$logFC, results_EDTAvsserum$hgnc_symbol)
+fgseaRes_EDTAvsserum <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsserum %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsserum"))
+```
+
+## Overview tables DE analysis
+
+```{r}
+DE_genes_table %>% filter(adj.P.Val < 0.05 & grepl("EDTAvs",contrast)) %>% group_by(contrast) %>% summarise(numberofgenes = n()) %>% mutate(Tube= sub("EDTAvs","",contrast)) %>% 
+  ggplot(aes(x=reorder(Tube, -numberofgenes), y= numberofgenes, fill=Tube))+
+  geom_col()+
+  labs(x="",y="number of differential genes compared to EDTA")+
+  theme_bar+theme(legend.position = "none")+
+  scale_fill_manual(values=color_panel2)
+
+ggsave("DEtubes_phase1_ngenes.pdf", device="pdf", useDingbats=FALSE)
+
+DE_genes_table %>% filter(grepl("EDTAvs", contrast)) %>% mutate(Tube= sub("EDTAvs","",contrast)) %>%
+    ggplot(aes(x=logFC,group=contrast, color=Tube))+
+  stat_ecdf(cex=2)+
+  geom_vline(xintercept = 0, linetype="dotted", color="grey")+
+  labs(y="cummulative percentage", x="logFC difference compared to EDTA")+
+  theme_point+
+  coord_flip(xlim=c(-5, 5))+
+  scale_color_manual(values=color_panel2)
+
+ggsave("DEtubes_phase1_FCdifferences.pdf", device="pdf", useDingbats=FALSE)
+
+DE_pathways_table %>% filter(grepl("EDTAvs", contrast)) %>% group_by(contrast) %>% summarise(numberofpathways= n())   %>% mutate(Tube= sub("EDTAvs","",contrast)) %>% 
+  ggplot(aes(x=reorder(Tube, -numberofpathways), y= numberofpathways, fill=Tube))+
+  geom_col()+
+  labs(x="",y="number of differential pathways compared to EDTA")+
+  theme_bar+
+  theme(legend.position = "none")+
+  scale_fill_manual(values=color_panel2)
+
+ggsave("DEtubes_phase1_npathways.pdf", device="pdf", useDingbats=FALSE)
+
+```
+
+# DE Analysis Phase 1 Timepoints within one Tube
+
+## EDTA
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_EDTA <- sample_annotation %>% filter(Tube=="EDTA")
+
+counts_spike_filtered_EDTA <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_EDTA$UniqueID])
+
+design_matrix <- annotation_EDTA  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_EDTA)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_EDTA  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_EDTA) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_EDTA <- counts_spike_filtered_EDTA[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_EDTA))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_EDTA.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### EDTA timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAT0vsT4 <- as.data.frame(res)
+results_EDTAT0vsT4  <- rownames_to_column(results_EDTAT0vsT4 ,"ensembl_gene_id")
+
+results_EDTAT0vsT4  <- left_join(results_EDTAT0vsT4 , genes_ens)
+results_EDTAT0vsT4  <- left_join(results_EDTAT0vsT4 , genes_length)
+
+results_EDTAT0vsT4  <- results_EDTAT0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAT0vsT4  %>% mutate(contrast="EDTAT0vsT4"))
+datatable(results_EDTAT0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAT0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAT0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAT0vsT4$logFC, results_EDTAT0vsT4$hgnc_symbol)
+fgseaRes_EDTAT0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAT0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAT0vsT4"))
+```
+
+
+### EDTA timepoint comparisons T0 vs T16
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAT0vsT16 <- as.data.frame(res)
+results_EDTAT0vsT16  <- rownames_to_column(results_EDTAT0vsT16 ,"ensembl_gene_id")
+
+results_EDTAT0vsT16  <- left_join(results_EDTAT0vsT16 , genes_ens)
+results_EDTAT0vsT16  <- left_join(results_EDTAT0vsT16 , genes_length)
+
+results_EDTAT0vsT16  <- results_EDTAT0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAT0vsT16  %>% mutate(contrast="EDTAT0vsT16"))
+datatable(results_EDTAT0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAT0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAT0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAT0vsT16$logFC, results_EDTAT0vsT16$hgnc_symbol)
+fgseaRes_EDTAT0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAT0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAT0vsT16"))
+```
+
+## Citrate
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_Citrate <- sample_annotation %>% filter(Tube=="Citrate" & UniqueID != "RNA004898L1")
+
+counts_spike_filtered_Citrate <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_Citrate$UniqueID])
+
+design_matrix <- annotation_Citrate  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_Citrate)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_Citrate  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_Citrate) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_Citrate <- counts_spike_filtered_Citrate[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_Citrate))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_Citrate.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### Citrate timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_CitrateT0vsT4 <- as.data.frame(res)
+results_CitrateT0vsT4  <- rownames_to_column(results_CitrateT0vsT4 ,"ensembl_gene_id")
+
+results_CitrateT0vsT4  <- left_join(results_CitrateT0vsT4 , genes_ens)
+results_CitrateT0vsT4  <- left_join(results_CitrateT0vsT4 , genes_length)
+
+results_CitrateT0vsT4  <- results_CitrateT0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_CitrateT0vsT4  %>% mutate(contrast="CitrateT0vsT4"))
+datatable(results_CitrateT0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_CitrateT0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_CitrateT0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_CitrateT0vsT4$logFC, results_CitrateT0vsT4$hgnc_symbol)
+fgseaRes_CitrateT0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_CitrateT0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="CitrateT0vsT4"))
+```
+
+
+### Citrate timepoint comparisons T0 vs T16
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_CitrateT0vsT16 <- as.data.frame(res)
+results_CitrateT0vsT16  <- rownames_to_column(results_CitrateT0vsT16 ,"ensembl_gene_id")
+
+results_CitrateT0vsT16  <- left_join(results_CitrateT0vsT16 , genes_ens)
+results_CitrateT0vsT16  <- left_join(results_CitrateT0vsT16 , genes_length)
+
+results_CitrateT0vsT16  <- results_CitrateT0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_CitrateT0vsT16  %>% mutate(contrast="CitrateT0vsT16"))
+datatable(results_CitrateT0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_CitrateT0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_CitrateT0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_CitrateT0vsT16$logFC, results_CitrateT0vsT16$hgnc_symbol)
+fgseaRes_CitrateT0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_CitrateT0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="CitrateT0vsT16"))
+```
+
+## Serum
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_serum <- sample_annotation %>% filter(Tube=="serum")
+
+counts_spike_filtered_serum <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_serum$UniqueID])
+
+design_matrix <- annotation_serum  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_serum)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_serum  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_serum) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_serum <- counts_spike_filtered_serum[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_serum))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_serum.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### serum timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_serumT0vsT4 <- as.data.frame(res)
+results_serumT0vsT4  <- rownames_to_column(results_serumT0vsT4 ,"ensembl_gene_id")
+
+results_serumT0vsT4  <- left_join(results_serumT0vsT4 , genes_ens)
+results_serumT0vsT4  <- left_join(results_serumT0vsT4 , genes_length)
+
+results_serumT0vsT4  <- results_serumT0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_serumT0vsT4  %>% mutate(contrast="serumT0vsT4"))
+datatable(results_serumT0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_serumT0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_serumT0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_serumT0vsT4$logFC, results_serumT0vsT4$hgnc_symbol)
+fgseaRes_serumT0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_serumT0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="serumT0vsT4"))
+```
+
+
+### serum timepoint comparisons T0 vs T16
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_serumT0vsT16 <- as.data.frame(res)
+results_serumT0vsT16  <- rownames_to_column(results_serumT0vsT16 ,"ensembl_gene_id")
+
+results_serumT0vsT16  <- left_join(results_serumT0vsT16 , genes_ens)
+results_serumT0vsT16  <- left_join(results_serumT0vsT16 , genes_length)
+
+results_serumT0vsT16  <- results_serumT0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_serumT0vsT16  %>% mutate(contrast="serumT0vsT16"))
+datatable(results_serumT0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_serumT0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_serumT0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_serumT0vsT16$logFC, results_serumT0vsT16$hgnc_symbol)
+fgseaRes_serumT0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_serumT0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="serumT0vsT16"))
+```
+
+## EDTA_separator
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_EDTA_separator <- sample_annotation %>% filter(Tube=="EDTA_separator")
+
+counts_spike_filtered_EDTA_separator <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_EDTA_separator$UniqueID])
+
+design_matrix <- annotation_EDTA_separator  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_EDTA_separator)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_EDTA_separator  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_EDTA_separator) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_EDTA_separator <- counts_spike_filtered_EDTA_separator[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_EDTA_separator))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_EDTA_separator.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### EDTA_separator timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTA_separatorT0vsT4 <- as.data.frame(res)
+results_EDTA_separatorT0vsT4  <- rownames_to_column(results_EDTA_separatorT0vsT4 ,"ensembl_gene_id")
+
+results_EDTA_separatorT0vsT4  <- left_join(results_EDTA_separatorT0vsT4 , genes_ens)
+results_EDTA_separatorT0vsT4  <- left_join(results_EDTA_separatorT0vsT4 , genes_length)
+
+results_EDTA_separatorT0vsT4  <- results_EDTA_separatorT0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTA_separatorT0vsT4  %>% mutate(contrast="EDTA_separatorT0vsT4"))
+datatable(results_EDTA_separatorT0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTA_separatorT0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTA_separatorT0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTA_separatorT0vsT4$logFC, results_EDTA_separatorT0vsT4$hgnc_symbol)
+fgseaRes_EDTA_separatorT0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTA_separatorT0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTA_separatorT0vsT4"))
+```
+
+
+### EDTA_separator timepoint comparisons T0 vs T16
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTA_separatorT0vsT16 <- as.data.frame(res)
+results_EDTA_separatorT0vsT16  <- rownames_to_column(results_EDTA_separatorT0vsT16 ,"ensembl_gene_id")
+
+results_EDTA_separatorT0vsT16  <- left_join(results_EDTA_separatorT0vsT16 , genes_ens)
+results_EDTA_separatorT0vsT16  <- left_join(results_EDTA_separatorT0vsT16 , genes_length)
+
+results_EDTA_separatorT0vsT16  <- results_EDTA_separatorT0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTA_separatorT0vsT16  %>% mutate(contrast="EDTA_separatorT0vsT16"))
+datatable(results_EDTA_separatorT0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTA_separatorT0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTA_separatorT0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTA_separatorT0vsT16$logFC, results_EDTA_separatorT0vsT16$hgnc_symbol)
+fgseaRes_EDTA_separatorT0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTA_separatorT0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTA_separatorT0vsT16"))
+```
+
+## ACD_A
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_ACD_A <- sample_annotation %>% filter(Tube=="ACD_A")
+
+counts_spike_filtered_ACD_A <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_ACD_A$UniqueID])
+
+design_matrix <- annotation_ACD_A  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_ACD_A)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_ACD_A  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_ACD_A) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_ACD_A <- counts_spike_filtered_ACD_A[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_ACD_A))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_ACD_A.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### ACD_A timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_ACD_AT0vsT4 <- as.data.frame(res)
+results_ACD_AT0vsT4  <- rownames_to_column(results_ACD_AT0vsT4 ,"ensembl_gene_id")
+
+results_ACD_AT0vsT4  <- left_join(results_ACD_AT0vsT4 , genes_ens)
+results_ACD_AT0vsT4  <- left_join(results_ACD_AT0vsT4 , genes_length)
+
+results_ACD_AT0vsT4  <- results_ACD_AT0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_ACD_AT0vsT4  %>% mutate(contrast="ACD_AT0vsT4"))
+datatable(results_ACD_AT0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_ACD_AT0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_ACD_AT0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_ACD_AT0vsT4$logFC, results_ACD_AT0vsT4$hgnc_symbol)
+fgseaRes_ACD_AT0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_ACD_AT0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="ACD_AT0vsT4"))
+```
+
+
+### ACD_A timepoint comparisons T0 vs T16
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_ACD_AT0vsT16 <- as.data.frame(res)
+results_ACD_AT0vsT16  <- rownames_to_column(results_ACD_AT0vsT16 ,"ensembl_gene_id")
+
+results_ACD_AT0vsT16  <- left_join(results_ACD_AT0vsT16 , genes_ens)
+results_ACD_AT0vsT16  <- left_join(results_ACD_AT0vsT16 , genes_length)
+
+results_ACD_AT0vsT16  <- results_ACD_AT0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_ACD_AT0vsT16  %>% mutate(contrast="ACD_AT0vsT16"))
+datatable(results_ACD_AT0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_ACD_AT0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_ACD_AT0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_ACD_AT0vsT16$logFC, results_ACD_AT0vsT16$hgnc_symbol)
+fgseaRes_ACD_AT0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_ACD_AT0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="ACD_AT0vsT16"))
+```
+
+## RNA_Streck
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_RNA_Streck <- sample_annotation %>% filter(Tube=="RNA_Streck")
+
+counts_spike_filtered_RNA_Streck <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_RNA_Streck$UniqueID])
+
+design_matrix <- annotation_RNA_Streck  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_RNA_Streck)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_RNA_Streck  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_RNA_Streck) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_RNA_Streck <- counts_spike_filtered_RNA_Streck[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_RNA_Streck))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_RNA_Streck.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### RNA_Streck timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT24 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_RNA_StreckT0vsT24 <- as.data.frame(res)
+results_RNA_StreckT0vsT24  <- rownames_to_column(results_RNA_StreckT0vsT24 ,"ensembl_gene_id")
+
+results_RNA_StreckT0vsT24  <- left_join(results_RNA_StreckT0vsT24 , genes_ens)
+results_RNA_StreckT0vsT24  <- left_join(results_RNA_StreckT0vsT24 , genes_length)
+
+results_RNA_StreckT0vsT24  <- results_RNA_StreckT0vsT24  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_RNA_StreckT0vsT24  %>% mutate(contrast="RNA_StreckT0vsT24"))
+datatable(results_RNA_StreckT0vsT24  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_RNA_StreckT0vsT24, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_RNA_StreckT0vsT24 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_RNA_StreckT0vsT24$logFC, results_RNA_StreckT0vsT24$hgnc_symbol)
+fgseaRes_RNA_StreckT0vsT24 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_RNA_StreckT0vsT24 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="RNA_StreckT0vsT24"))
+```
+
+
+### RNA_Streck timepoint comparisons T0 vs T72
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT72 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_RNA_StreckT0vsT72 <- as.data.frame(res)
+results_RNA_StreckT0vsT72  <- rownames_to_column(results_RNA_StreckT0vsT72 ,"ensembl_gene_id")
+
+results_RNA_StreckT0vsT72  <- left_join(results_RNA_StreckT0vsT72 , genes_ens)
+results_RNA_StreckT0vsT72  <- left_join(results_RNA_StreckT0vsT72 , genes_length)
+
+results_RNA_StreckT0vsT72  <- results_RNA_StreckT0vsT72  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_RNA_StreckT0vsT72  %>% mutate(contrast="RNA_StreckT0vsT72"))
+datatable(results_RNA_StreckT0vsT72  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_RNA_StreckT0vsT72, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_RNA_StreckT0vsT72 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_RNA_StreckT0vsT72$logFC, results_RNA_StreckT0vsT72$hgnc_symbol)
+fgseaRes_RNA_StreckT0vsT72 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_RNA_StreckT0vsT72 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="RNA_StreckT0vsT72"))
+```
+
+## DNA_Streck
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_DNA_Streck <- sample_annotation %>% filter(Tube=="DNA_Streck")
+
+counts_spike_filtered_DNA_Streck <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_DNA_Streck$UniqueID])
+
+design_matrix <- annotation_DNA_Streck  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_DNA_Streck)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_DNA_Streck  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_DNA_Streck) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_DNA_Streck <- counts_spike_filtered_DNA_Streck[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_DNA_Streck))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_DNA_Streck.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### DNA_Streck timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT24 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_DNA_StreckT0vsT24 <- as.data.frame(res)
+results_DNA_StreckT0vsT24  <- rownames_to_column(results_DNA_StreckT0vsT24 ,"ensembl_gene_id")
+
+results_DNA_StreckT0vsT24  <- left_join(results_DNA_StreckT0vsT24 , genes_ens)
+results_DNA_StreckT0vsT24  <- left_join(results_DNA_StreckT0vsT24 , genes_length)
+
+results_DNA_StreckT0vsT24  <- results_DNA_StreckT0vsT24  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_DNA_StreckT0vsT24  %>% mutate(contrast="DNA_StreckT0vsT24"))
+datatable(results_DNA_StreckT0vsT24  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_DNA_StreckT0vsT24, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_DNA_StreckT0vsT24 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_DNA_StreckT0vsT24$logFC, results_DNA_StreckT0vsT24$hgnc_symbol)
+fgseaRes_DNA_StreckT0vsT24 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_DNA_StreckT0vsT24 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="DNA_StreckT0vsT24"))
+```
+
+
+### DNA_Streck timepoint comparisons T0 vs T72
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT72 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_DNA_StreckT0vsT72 <- as.data.frame(res)
+results_DNA_StreckT0vsT72  <- rownames_to_column(results_DNA_StreckT0vsT72 ,"ensembl_gene_id")
+
+results_DNA_StreckT0vsT72  <- left_join(results_DNA_StreckT0vsT72 , genes_ens)
+results_DNA_StreckT0vsT72  <- left_join(results_DNA_StreckT0vsT72 , genes_length)
+
+results_DNA_StreckT0vsT72  <- results_DNA_StreckT0vsT72  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_DNA_StreckT0vsT72  %>% mutate(contrast="DNA_StreckT0vsT72"))
+datatable(results_DNA_StreckT0vsT72  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_DNA_StreckT0vsT72, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_DNA_StreckT0vsT72 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_DNA_StreckT0vsT72$logFC, results_DNA_StreckT0vsT72$hgnc_symbol)
+fgseaRes_DNA_StreckT0vsT72 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_DNA_StreckT0vsT72 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="DNA_StreckT0vsT72"))
+```
+
+## Roche
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_Roche <- sample_annotation %>% filter(Tube=="Roche")
+
+counts_spike_filtered_Roche <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_Roche$UniqueID])
+
+design_matrix <- annotation_Roche  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_Roche)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_Roche  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_Roche) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_Roche <- counts_spike_filtered_Roche[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_Roche))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_Roche.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### Roche timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT24 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_RocheT0vsT24 <- as.data.frame(res)
+results_RocheT0vsT24  <- rownames_to_column(results_RocheT0vsT24 ,"ensembl_gene_id")
+
+results_RocheT0vsT24  <- left_join(results_RocheT0vsT24 , genes_ens)
+results_RocheT0vsT24  <- left_join(results_RocheT0vsT24 , genes_length)
+
+results_RocheT0vsT24  <- results_RocheT0vsT24  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_RocheT0vsT24  %>% mutate(contrast="RocheT0vsT24"))
+datatable(results_RocheT0vsT24  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_RocheT0vsT24, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_RocheT0vsT24 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_RocheT0vsT24$logFC, results_RocheT0vsT24$hgnc_symbol)
+fgseaRes_RocheT0vsT24 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_RocheT0vsT24 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="RocheT0vsT24"))
+```
+
+
+### Roche timepoint comparisons T0 vs T72
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT72 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_RocheT0vsT72 <- as.data.frame(res)
+results_RocheT0vsT72  <- rownames_to_column(results_RocheT0vsT72 ,"ensembl_gene_id")
+
+results_RocheT0vsT72  <- left_join(results_RocheT0vsT72 , genes_ens)
+results_RocheT0vsT72  <- left_join(results_RocheT0vsT72 , genes_length)
+
+results_RocheT0vsT72  <- results_RocheT0vsT72  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_RocheT0vsT72  %>% mutate(contrast="RocheT0vsT72"))
+datatable(results_RocheT0vsT72  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_RocheT0vsT72, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_RocheT0vsT72 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_RocheT0vsT72$logFC, results_RocheT0vsT72$hgnc_symbol)
+fgseaRes_RocheT0vsT72 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_RocheT0vsT72 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="RocheT0vsT72"))
+```
+
+## Biomatrica
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_Biomatrica <- sample_annotation %>% filter(Tube=="Biomatrica")
+
+counts_spike_filtered_Biomatrica <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_Biomatrica$UniqueID])
+
+design_matrix <- annotation_Biomatrica  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_Biomatrica)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_Biomatrica  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_Biomatrica) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_Biomatrica <- counts_spike_filtered_Biomatrica[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_Biomatrica))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_Biomatrica.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### Biomatrica timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT24 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_BiomatricaT0vsT24 <- as.data.frame(res)
+results_BiomatricaT0vsT24  <- rownames_to_column(results_BiomatricaT0vsT24 ,"ensembl_gene_id")
+
+results_BiomatricaT0vsT24  <- left_join(results_BiomatricaT0vsT24 , genes_ens)
+results_BiomatricaT0vsT24  <- left_join(results_BiomatricaT0vsT24 , genes_length)
+
+results_BiomatricaT0vsT24  <- results_BiomatricaT0vsT24  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_BiomatricaT0vsT24  %>% mutate(contrast="BiomatricaT0vsT24"))
+datatable(results_BiomatricaT0vsT24  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_BiomatricaT0vsT24, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_BiomatricaT0vsT24 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_BiomatricaT0vsT24$logFC, results_BiomatricaT0vsT24$hgnc_symbol)
+fgseaRes_BiomatricaT0vsT24 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_BiomatricaT0vsT24 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="BiomatricaT0vsT24"))
+```
+
+
+### Biomatrica timepoint comparisons T0 vs T72
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT72 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_BiomatricaT0vsT72 <- as.data.frame(res)
+results_BiomatricaT0vsT72  <- rownames_to_column(results_BiomatricaT0vsT72 ,"ensembl_gene_id")
+
+results_BiomatricaT0vsT72  <- left_join(results_BiomatricaT0vsT72 , genes_ens)
+results_BiomatricaT0vsT72  <- left_join(results_BiomatricaT0vsT72 , genes_length)
+
+results_BiomatricaT0vsT72  <- results_BiomatricaT0vsT72  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_BiomatricaT0vsT72  %>% mutate(contrast="BiomatricaT0vsT72"))
+datatable(results_BiomatricaT0vsT72  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_BiomatricaT0vsT72, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_BiomatricaT0vsT72 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_BiomatricaT0vsT72$logFC, results_BiomatricaT0vsT72$hgnc_symbol)
+fgseaRes_BiomatricaT0vsT72 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_BiomatricaT0vsT72 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="BiomatricaT0vsT72"))
+```
+
+## PAXgene
+
+Only genes expressed with at least 10 counts in one of the tubes are retained. Tube comparisons are performed at timepoint 0.
+
+```{r}
+annotation_PAXgene <- sample_annotation %>% filter(Tube=="PAXgene")
+
+counts_spike_filtered_PAXgene <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% annotation_PAXgene$UniqueID])
+
+design_matrix <- annotation_PAXgene  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_PAXgene)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse + Donor, data=design_matrix)
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_PAXgene  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_PAXgene) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_PAXgene <- counts_spike_filtered_PAXgene[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_PAXgene))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+```
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_pertube_filtered_PAXgene.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### PAXgene timepoint comparisons T0 vs T4
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT24 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_PAXgeneT0vsT24 <- as.data.frame(res)
+results_PAXgeneT0vsT24  <- rownames_to_column(results_PAXgeneT0vsT24 ,"ensembl_gene_id")
+
+results_PAXgeneT0vsT24  <- left_join(results_PAXgeneT0vsT24 , genes_ens)
+results_PAXgeneT0vsT24  <- left_join(results_PAXgeneT0vsT24 , genes_length)
+
+results_PAXgeneT0vsT24  <- results_PAXgeneT0vsT24  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_PAXgeneT0vsT24  %>% mutate(contrast="PAXgeneT0vsT24"))
+datatable(results_PAXgeneT0vsT24  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_PAXgeneT0vsT24, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_PAXgeneT0vsT24 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_PAXgeneT0vsT24$logFC, results_PAXgeneT0vsT24$hgnc_symbol)
+fgseaRes_PAXgeneT0vsT24 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_PAXgeneT0vsT24 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="PAXgeneT0vsT24"))
+```
+
+
+### PAXgene timepoint comparisons T0 vs T72
+
+```{r}
+
+contr <- makeContrasts(TimeLapseT72 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_PAXgeneT0vsT72 <- as.data.frame(res)
+results_PAXgeneT0vsT72  <- rownames_to_column(results_PAXgeneT0vsT72 ,"ensembl_gene_id")
+
+results_PAXgeneT0vsT72  <- left_join(results_PAXgeneT0vsT72 , genes_ens)
+results_PAXgeneT0vsT72  <- left_join(results_PAXgeneT0vsT72 , genes_length)
+
+results_PAXgeneT0vsT72  <- results_PAXgeneT0vsT72  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_PAXgeneT0vsT72  %>% mutate(contrast="PAXgeneT0vsT72"))
+datatable(results_PAXgeneT0vsT72  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_PAXgeneT0vsT72, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_PAXgeneT0vsT72 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_PAXgeneT0vsT72$logFC, results_PAXgeneT0vsT72$hgnc_symbol)
+fgseaRes_PAXgeneT0vsT72 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_PAXgeneT0vsT72 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="PAXgeneT0vsT72"))
+```
+
+## Overview tables DE analysis
+
+```{r}
+DE_genes_table %>% filter(grepl('T0',contrast)) %>%  filter(adj.P.Val < 0.05) %>% group_by(contrast) %>% summarise(numberofgenes = n()) %>% mutate(Tube= sub("T0vs.*","",contrast), Timepoint=sub(".*T0vs","",contrast), TimepointDiscrete = case_when(Timepoint %in% c('T4','T24')~ "FirstTimepoint",
+          Timepoint %in% c('T16','T72')~ "SecondTimepoint")) %>% complete(Tube, TimepointDiscrete, fill = list(numberofgenes = 0)) %>%
+  ggplot(aes(x=TimepointDiscrete, y= numberofgenes, group=Tube, color=Tube))+
+  geom_point()+
+  geom_line()+
+  labs(x="",y="number of differential genes \n compared to T0")+
+  theme_bar+theme(legend.position = "none")+
+  scale_color_manual(values=color_panel2)
+
+ggsave("DEtimepoints_phase1_ngenes.pdf", device="pdf", useDingbats=FALSE)
+
+DE_pathways_table %>% filter(grepl('T0',contrast)) %>% group_by(contrast) %>% summarise(numberofpathways= n()) %>% mutate(Tube= sub("T0vs.*","",contrast), Timepoint=sub(".*T0vs","",contrast), TimepointDiscrete = case_when(Timepoint %in% c('T4','T24')~ "FirstTimepoint",
+          Timepoint %in% c('T16','T72')~ "SecondTimepoint")) %>% complete(Tube, TimepointDiscrete, fill = list(numberofpathways = 0)) %>%
+  ggplot(aes(x=TimepointDiscrete, y= numberofpathways, group=Tube, color=Tube))+
+  geom_point()+
+  geom_line()+
+  labs(x="",y="number of differential pathways \n compared to T0")+
+  theme_bar+theme(legend.position = "none")+
+  scale_color_manual(values=color_panel2)
+
+ggsave("DEtimepoints_phase1_pathways.pdf", device="pdf", useDingbats=FALSE)
+
+de_genes_summary<-DE_genes_table %>% filter(grepl('T0',contrast)) %>%  filter(adj.P.Val < 0.05) %>% group_by(contrast) %>% summarise(numberofgenes = n()) %>% mutate(Tube= sub("T0vs.*","",contrast), Timepoint=sub(".*T0vs","",contrast), TimepointDiscrete = case_when(Timepoint %in% c('T4','T24')~ "FirstTimepoint",
+          Timepoint %in% c('T16','T72')~ "SecondTimepoint"))
+
+de_pathways_summary <- DE_pathways_table %>% filter(grepl('T0',contrast)) %>% group_by(contrast) %>% summarise(numberofpathways= n()) %>% mutate(Tube= sub("T0vs.*","",contrast), Timepoint=sub(".*T0vs","",contrast), TimepointDiscrete = case_when(Timepoint %in% c('T4','T24')~ "FirstTimepoint",
+          Timepoint %in% c('T16','T72')~ "SecondTimepoint")) 
+
+write_tsv(de_genes_summary, "summary_de_genes.tsv")
+write_tsv(de_pathways_summary, "summary_de_pathways.tsv")
+```
+
+## Hemoglobine differences over time
+
+```{r}
+DE_genes_table %>% filter(grepl("^HB",hgnc_symbol) & grepl("T0",contrast)) %>%
+  ggplot(aes(x=contrast,y=logFC))+
+    geom_col()+
+    theme_bar+
+    facet_wrap(~hgnc_symbol)
+
+DE_genes_table %>% filter(grepl("^HB",hgnc_symbol) & grepl("T0",contrast)) %>%
+  mutate(Timestamp = as.numeric(gsub("T","",gsub(".*vs","",contrast))), Tube= gsub("T0.*","",contrast)) %>%
+  ggplot(aes(x=Timestamp,y=logFC, group=hgnc_symbol, color=hgnc_symbol))+
+    geom_point()+
+    geom_line()+
+    theme_bar+
+    facet_wrap(~Tube, scales="free")
+
+DE_genes_table %>% filter(hgnc_symbol %in% c("HBA1","HBA2","HBB","HBG2") & grepl("T0",contrast)) %>%
+  mutate(Timestamp = as.numeric(gsub("T","",gsub(".*vs","",contrast))), Tube= gsub("T0.*","",contrast)) %>%
+  ggplot(aes(x=Timestamp,y=logFC, group=hgnc_symbol, color=hgnc_symbol))+
+    geom_point()+
+    geom_line()+
+    theme_bar+
+    facet_wrap(~Tube, scales="free_x")
+
+DE_genes_table %>% filter(hgnc_symbol %in% c("HBA1","HBA2","HBB","HBG2") & grepl("T0",contrast)) %>%
+  mutate(Timestamp = as.numeric(gsub("T","",gsub(".*vs","",contrast))), Tube= gsub("T0.*","",contrast), TimepointDiscrete = case_when(Timestamp %in% c(4,24)~ "FirstTimepoint",
+          Timestamp %in% c(16,72)~ "SecondTimepoint")) %>% group_by(Tube, TimepointDiscrete) %>% summarise(sumlogFC=sum(logFC)) %>%
+  ggplot(aes(x=TimepointDiscrete,y=sumlogFC,  group=Tube, color=Tube))+
+    geom_point()+
+    geom_line()+
+    theme_bar+
+  scale_color_manual(values=color_panel2)
+```
+```{r}
+# normalise counts
+
+counts_spike_filtered_all <- counts %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts)[colnames(counts) %in% sample_annotation$UniqueID])
+
+design_matrix <- sample_annotation  %>% 
+  filter(UniqueID %in% colnames(counts_spike_filtered_all)) %>%
+  dplyr::select(UniqueID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("UniqueID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + Tube + Donor + TimeLapse, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_all) >= 30
+counts_spike_filtered_all <- counts_spike_filtered_all[keep,]
+keep <- apply(counts_spike_filtered_all, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_all <- counts_spike_filtered_all[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_all  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),sample_annotation) %>% group_by(Tube, TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts ==3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_all <- counts_spike_filtered_all[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_all))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+counts_normalized_all <- log2(cpm(d)+1)
+
+hemoglobine_ncounts <- left_join(pivot_longer(left_join(rownames_to_column(as.data.frame(counts_normalized_all),"ensembl_gene_id"), genes_ens) %>% filter(hgnc_symbol %in% c("HBA1","HBA2","HBB","HBG2")), starts_with("RNA")), sample_annotation, by=c("name"="UniqueID"))
+
+hemoglobine_ncounts %>%
+  ggplot(aes(x=Hemolysis_PFP,y=value, color=hgnc_symbol))+
+  geom_point()+
+  theme_point +
+  facet_wrap(~Tube)
+```
+
+## Time Fold Change analysis
+
+```{r}
+DE_genes_table %>% select(contrast, logFC) %>% filter(grepl("T0",contrast)) %>%
+  mutate(Timestamp = as.factor(gsub("T","",gsub(".*vs","",contrast))), Tube= gsub("T0.*","",contrast), TimepointDiscrete = case_when(Timestamp %in% c(4,24)~ "FirstTimepoint",
+          Timestamp %in% c(16,72)~ "SecondTimepoint"), TubeType = case_when(Tube %in% c("EDTA", "serum", "Citrate", "ACD_A", "EDTA_separator")~"non-preservation",
+                                                                            TRUE~"preservation")) %>%
+   ggplot(aes(x=logFC,group=contrast, color=Tube,linetype=TimepointDiscrete ))+
+  stat_ecdf(cex=2)+
+  geom_vline(xintercept = 0, linetype="dotted", color="grey")+
+  labs(y="cummulative percentage", x="logFC difference compared to EDTA")+
+  theme_point+
+  coord_flip(xlim=c(-5, 5))+
+  facet_wrap(~TubeType)+
+  scale_color_manual(values=color_panel2)
+
+DE_genes_table %>% select(contrast, logFC) %>% filter(grepl("T0",contrast), !grepl("phase2", contrast)) %>%
+  mutate(Timestamp = as.factor(gsub("T","",gsub(".*vs","",contrast))), Tube= gsub("T0.*","",contrast), TimepointDiscrete = case_when(Timestamp %in% c(4,24)~ "FirstTimepoint",
+          Timestamp %in% c(16,72)~ "SecondTimepoint"), TubeType = case_when(Tube %in% c("EDTA", "serum", "Citrate", "ACD_A", "EDTA_separator")~"non-preservation",
+                                                                            TRUE~"preservation")) %>%
+   ggplot(aes(x=logFC,group=contrast, color=Tube,linetype=TimepointDiscrete ))+
+  stat_ecdf(cex=2)+
+  geom_vline(xintercept = 0, linetype="dotted", color="grey")+
+  labs(y="cummulative percentage", x="logFC difference compared to T0")+
+  theme_point+
+  coord_cartesian(xlim=c(-4, 4))+
+  facet_wrap(~TubeType)+
+  scale_color_manual(values=color_panel2)
+
+ggsave("cumdis_timepoints.pdf", height = 7, width = 10)
+```
+
+## Heatmap Genes
+
+```{r}
+counts_normalized_T0 <- read_tsv("counts_normalised_pertube_filtered_timepoint0.tsv")
+
+mean_exp_per_tube <- left_join(counts_normalized_T0 %>% pivot_longer(-ensembl_gene_id,names_to="UniqueID", values_to="count"),annotation_T0)  %>% group_by(Tube, ensembl_gene_id) %>% summarise(meancount=mean(count)) %>% pivot_wider(names_from="Tube", values_from="meancount")
+
+mean_exp_per_tube_scaled <- t(apply(mean_exp_per_tube[, -1], 1, scale))
+rownames(mean_exp_per_tube_scaled) <- rownames(mean_exp_per_tube[, -1])
+colnames(mean_exp_per_tube_scaled) <- colnames(mean_exp_per_tube[, -1])
+library(ComplexHeatmap)
+library(RColorBrewer)
+library(circlize)
+
+col_fun = colorRamp2(c(-1,0, 1), c( "darkred","white", "darkblue")) 
+column_ha = HeatmapAnnotation(Tube = colnames(mean_exp_per_tube[, -1]), col = list(Tube = color_panel2))
+
+hm <- Heatmap(mean_exp_per_tube_scaled, name="tube_all_genes", col = col_fun, 
+        show_row_names = FALSE, show_column_names = FALSE, 
+        row_title = "genes measured by RNA-seq", column_title = "",
+        show_row_dend = FALSE,
+        show_column_dend = TRUE,
+        top_annotation = column_ha)
+
+hm
+
+tidyHeatmap::save_pdf(hm,"HeatmapTubesT0.pdf")
+
+
+```
+
+# Phase 2 - Confirm Tube differences at T0
+
+## Perform DE Limma - no spike normalisation
+
+```{r}
+annotation_T0 <- sample_annotation_phase2 %>% filter(TimeLapse=="T0") %>% mutate(Donor=gsub("-","_",Donor))
+
+counts_spike_filtered_T0 <- counts_phase2 %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts_phase2)[colnames(counts_phase2) %in% annotation_T0$RNAID])
+
+design_matrix <- annotation_T0  %>% 
+  filter(RNAID %in% colnames(counts_spike_filtered_T0)) %>%
+  dplyr::select(RNAID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + Tube + Donor, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_T0) >= 30
+counts_spike_filtered_T0 <- counts_spike_filtered_T0[keep,]
+keep <- apply(counts_spike_filtered_T0, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_T0 <- counts_spike_filtered_T0[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_T0  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="RNAID", values_to="count"),annotation_T0) %>% group_by(Tube, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts >=3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_T0 <- counts_spike_filtered_T0[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_T0))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+```
+
+### EDTA vs Citrate
+
+```{r}
+
+contr <- makeContrasts(TubeCitrate - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsCitrate <- as.data.frame(res)
+results_EDTAvsCitrate <- rownames_to_column(results_EDTAvsCitrate,"ensembl_gene_id")
+
+results_EDTAvsCitrate <- left_join(results_EDTAvsCitrate, genes_ens)
+results_EDTAvsCitrate <- left_join(results_EDTAvsCitrate, genes_length)
+
+results_EDTAvsCitrate <- results_EDTAvsCitrate %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsCitrate %>% mutate(contrast="EDTAvsCitrate_phase2"))
+datatable(results_EDTAvsCitrate %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsCitrate, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsCitrate %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAvsCitrate$logFC, results_EDTAvsCitrate$hgnc_symbol)
+fgseaRes_EDTAvsCitrate <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsCitrate %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsCitrate_phase2"))
+```
+
+### EDTA vs serum
+
+```{r}
+
+contr <- makeContrasts(Tubeserum - TubeEDTA, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAvsserum <- as.data.frame(res)
+results_EDTAvsserum <- rownames_to_column(results_EDTAvsserum,"ensembl_gene_id")
+
+results_EDTAvsserum <- left_join(results_EDTAvsserum, genes_ens)
+results_EDTAvsserum <- left_join(results_EDTAvsserum, genes_length)
+
+results_EDTAvsserum <- results_EDTAvsserum %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAvsserum %>% mutate(contrast="EDTAvsserum_phase2"))
+datatable(results_EDTAvsserum %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAvsserum, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAvsserum %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAvsserum$logFC, results_EDTAvsserum$hgnc_symbol)
+fgseaRes_EDTAvsserum <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAvsserum %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAvsserum_phase2"))
+```
+
+## Compare FC phase 1 vs phase2
+
+```{r}
+tube_phase_comparison <- DE_genes_table %>% filter(contrast %in% c("EDTAvsserum_phase2", "EDTAvsserum", "EDTAvsCitrate_phase2","EDTAvsCitrate")) %>% pivot_wider(id_cols= "ensembl_gene_id", values_from = logFC, values_fill=NA, names_from="contrast") %>% drop_na()
+
+ggplot(tube_phase_comparison, aes(x=EDTAvsserum, y=EDTAvsserum_phase2))+
+  geom_point()+
+  theme_point
+
+ggplot(tube_phase_comparison, aes(x=EDTAvsCitrate, y=EDTAvsCitrate_phase2))+
+  geom_point()+
+  theme_point
+
+
+DE_pathways_table  %>% filter(contrast %in% c("EDTAvsserum_phase2", "EDTAvsserum")) %>% pivot_wider(id_cols= pathway, values_from = NES, values_fill=NA, names_from=contrast) %>% drop_na() %>%
+  ggplot(aes(x=EDTAvsserum, y=EDTAvsserum_phase2))+
+  geom_point()+
+  theme_point
+
+
+DE_pathways_table  %>% filter(contrast %in% c("EDTAvsCitrate_phase2","EDTAvsCitrate")) %>% pivot_wider(id_cols= pathway, values_from = NES, values_fill=NA, names_from=contrast) %>% drop_na() %>%
+ggplot(aes(x=EDTAvsCitrate, y=EDTAvsCitrate_phase2))+
+  geom_point()+
+  theme_point
+```
+
+
+
+
+# Phase 2 - Timepoint comparison
+
+## EDTA_MIR
+
+```{r}
+annotation_EDTA_MIR <- sample_annotation_phase2 %>% filter(Tube == "EDTA", RNAisolation=="miRNeasySPkit") %>% mutate(Donor=gsub("-","_",Donor))
+
+counts_spike_filtered_EDTA_MIR <- counts_phase2 %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts_phase2)[colnames(counts_phase2) %in% annotation_EDTA_MIR $RNAID])
+
+design_matrix <- annotation_EDTA_MIR  %>% 
+  filter(RNAID %in% colnames(counts_spike_filtered_EDTA_MIR)) %>%
+  dplyr::select(RNAID, Donor, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_EDTA_MIR) >= 30
+counts_spike_filtered_EDTA_MIR <- counts_spike_filtered_EDTA_MIR[keep,]
+keep <- apply(counts_spike_filtered_EDTA_MIR, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_EDTA_MIR <- counts_spike_filtered_EDTA_MIR[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_EDTA_MIR  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="RNAID", values_to="count"),annotation_EDTA_MIR) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts >=3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_EDTA_MIR <- counts_spike_filtered_EDTA_MIR[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_EDTA_MIR))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+```
+
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_filtered_EDTA_MIR.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### EDTA timepoint comparisons T0 vs T4
+
+```{r}
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAMIR_T0vsT4 <- as.data.frame(res)
+results_EDTAMIR_T0vsT4  <- rownames_to_column(results_EDTAMIR_T0vsT4 ,"ensembl_gene_id")
+
+results_EDTAMIR_T0vsT4  <- left_join(results_EDTAMIR_T0vsT4 , genes_ens)
+results_EDTAMIR_T0vsT4  <- left_join(results_EDTAMIR_T0vsT4 , genes_length)
+
+results_EDTAMIR_T0vsT4  <- results_EDTAMIR_T0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAMIR_T0vsT4  %>% mutate(contrast="EDTAMIR_T0vsT4_phase2"))
+datatable(results_EDTAMIR_T0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAMIR_T0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAMIR_T0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAMIR_T0vsT4$logFC, results_EDTAMIR_T0vsT4$hgnc_symbol)
+fgseaRes_EDTAMIR_T0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAMIR_T0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAMIR_T0vsT4_phase2"))
+```
+
+### EDTA timepoint comparisons T0 vs T16
+
+```{r}
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAMIR_T0vsT16 <- as.data.frame(res)
+results_EDTAMIR_T0vsT16  <- rownames_to_column(results_EDTAMIR_T0vsT16 ,"ensembl_gene_id")
+
+results_EDTAMIR_T0vsT16  <- left_join(results_EDTAMIR_T0vsT16 , genes_ens)
+results_EDTAMIR_T0vsT16  <- left_join(results_EDTAMIR_T0vsT16 , genes_length)
+
+results_EDTAMIR_T0vsT16  <- results_EDTAMIR_T0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAMIR_T0vsT16  %>% mutate(contrast="EDTAMIR_T0vsT16_phase2"))
+datatable(results_EDTAMIR_T0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAMIR_T0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAMIR_T0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAMIR_T0vsT16$logFC, results_EDTAMIR_T0vsT16$hgnc_symbol)
+fgseaRes_EDTAMIR_T0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAMIR_T0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAMIR_T0vsT16_phase2"))
+```
+
+## EDTA_QIAamp
+
+```{r}
+annotation_EDTA_QIAamp <- sample_annotation_phase2 %>% filter(Tube == "EDTA", RNAisolation=="QIAamp") %>% mutate(Donor=gsub("-","_",Donor))
+
+counts_spike_filtered_EDTA_QIAamp <- counts_phase2 %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts_phase2)[colnames(counts_phase2) %in% annotation_EDTA_QIAamp $RNAID])
+
+design_matrix <- annotation_EDTA_QIAamp  %>% 
+  filter(RNAID %in% colnames(counts_spike_filtered_EDTA_QIAamp)) %>%
+  dplyr::select(RNAID, Donor, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_EDTA_QIAamp) >= 30
+counts_spike_filtered_EDTA_QIAamp <- counts_spike_filtered_EDTA_QIAamp[keep,]
+keep <- apply(counts_spike_filtered_EDTA_QIAamp, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_EDTA_QIAamp <- counts_spike_filtered_EDTA_QIAamp[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_EDTA_QIAamp  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="RNAID", values_to="count"),annotation_EDTA_QIAamp) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts >=3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_EDTA_QIAamp <- counts_spike_filtered_EDTA_QIAamp[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_EDTA_QIAamp))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+```
+
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_filtered_EDTA_QIAamp.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### EDTA timepoint comparisons T0 vs T4
+
+```{r}
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAQIAamp_T0vsT4 <- as.data.frame(res)
+results_EDTAQIAamp_T0vsT4  <- rownames_to_column(results_EDTAQIAamp_T0vsT4 ,"ensembl_gene_id")
+
+results_EDTAQIAamp_T0vsT4  <- left_join(results_EDTAQIAamp_T0vsT4 , genes_ens)
+results_EDTAQIAamp_T0vsT4  <- left_join(results_EDTAQIAamp_T0vsT4 , genes_length)
+
+results_EDTAQIAamp_T0vsT4  <- results_EDTAQIAamp_T0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAQIAamp_T0vsT4  %>% mutate(contrast="EDTAQIAamp_T0vsT4_phase2"))
+datatable(results_EDTAQIAamp_T0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAQIAamp_T0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAQIAamp_T0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAQIAamp_T0vsT4$logFC, results_EDTAQIAamp_T0vsT4$hgnc_symbol)
+fgseaRes_EDTAQIAamp_T0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAQIAamp_T0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAQIAamp_T0vsT4_phase2"))
+```
+
+### EDTA timepoint comparisons T0 vs T16
+
+```{r}
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_EDTAQIAamp_T0vsT16 <- as.data.frame(res)
+results_EDTAQIAamp_T0vsT16  <- rownames_to_column(results_EDTAQIAamp_T0vsT16 ,"ensembl_gene_id")
+
+results_EDTAQIAamp_T0vsT16  <- left_join(results_EDTAQIAamp_T0vsT16 , genes_ens)
+results_EDTAQIAamp_T0vsT16  <- left_join(results_EDTAQIAamp_T0vsT16 , genes_length)
+
+results_EDTAQIAamp_T0vsT16  <- results_EDTAQIAamp_T0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_EDTAQIAamp_T0vsT16  %>% mutate(contrast="EDTAQIAamp_T0vsT16_phase2"))
+datatable(results_EDTAQIAamp_T0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_EDTAQIAamp_T0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_EDTAQIAamp_T0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_EDTAQIAamp_T0vsT16$logFC, results_EDTAQIAamp_T0vsT16$hgnc_symbol)
+fgseaRes_EDTAQIAamp_T0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_EDTAQIAamp_T0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="EDTAQIAamp_T0vsT16_phase2"))
+```
+
+## CIT_MIR
+
+```{r}
+annotation_CIT_MIR <- sample_annotation_phase2 %>% filter(Tube == "Citrate", RNAisolation=="miRNeasySPkit") %>% mutate(Donor=gsub("-","_",Donor))
+
+counts_spike_filtered_CIT_MIR <- counts_phase2 %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts_phase2)[colnames(counts_phase2) %in% annotation_CIT_MIR $RNAID])
+
+design_matrix <- annotation_CIT_MIR  %>% 
+  filter(RNAID %in% colnames(counts_spike_filtered_CIT_MIR)) %>%
+  dplyr::select(RNAID, Donor, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_CIT_MIR) >= 30
+counts_spike_filtered_CIT_MIR <- counts_spike_filtered_CIT_MIR[keep,]
+keep <- apply(counts_spike_filtered_CIT_MIR, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_CIT_MIR <- counts_spike_filtered_CIT_MIR[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_CIT_MIR  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="RNAID", values_to="count"),annotation_CIT_MIR) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts >=3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_CIT_MIR <- counts_spike_filtered_CIT_MIR[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_CIT_MIR))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+```
+
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_filtered_CIT_MIR.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### CIT timepoint comparisons T0 vs T4
+
+```{r}
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_CITMIR_T0vsT4 <- as.data.frame(res)
+results_CITMIR_T0vsT4  <- rownames_to_column(results_CITMIR_T0vsT4 ,"ensembl_gene_id")
+
+results_CITMIR_T0vsT4  <- left_join(results_CITMIR_T0vsT4 , genes_ens)
+results_CITMIR_T0vsT4  <- left_join(results_CITMIR_T0vsT4 , genes_length)
+
+results_CITMIR_T0vsT4  <- results_CITMIR_T0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_CITMIR_T0vsT4  %>% mutate(contrast="CITMIR_T0vsT4_phase2"))
+datatable(results_CITMIR_T0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_CITMIR_T0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_CITMIR_T0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_CITMIR_T0vsT4$logFC, results_CITMIR_T0vsT4$hgnc_symbol)
+fgseaRes_CITMIR_T0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_CITMIR_T0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="CITMIR_T0vsT4_phase2"))
+```
+
+### CIT timepoint comparisons T0 vs T16
+
+```{r}
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_CITMIR_T0vsT16 <- as.data.frame(res)
+results_CITMIR_T0vsT16  <- rownames_to_column(results_CITMIR_T0vsT16 ,"ensembl_gene_id")
+
+results_CITMIR_T0vsT16  <- left_join(results_CITMIR_T0vsT16 , genes_ens)
+results_CITMIR_T0vsT16  <- left_join(results_CITMIR_T0vsT16 , genes_length)
+
+results_CITMIR_T0vsT16  <- results_CITMIR_T0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_CITMIR_T0vsT16  %>% mutate(contrast="CITMIR_T0vsT16_phase2"))
+datatable(results_CITMIR_T0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_CITMIR_T0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_CITMIR_T0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_CITMIR_T0vsT16$logFC, results_CITMIR_T0vsT16$hgnc_symbol)
+fgseaRes_CITMIR_T0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_CITMIR_T0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="CITMIR_T0vsT16_phase2"))
+```
+
+## CIT_QIAamp
+
+```{r}
+annotation_CIT_QIAamp <- sample_annotation_phase2 %>% filter(Tube == "EDTA", RNAisolation=="QIAamp") %>% mutate(Donor=gsub("-","_",Donor))
+
+counts_spike_filtered_CIT_QIAamp <- counts_phase2 %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts_phase2)[colnames(counts_phase2) %in% annotation_CIT_QIAamp $RNAID])
+
+design_matrix <- annotation_CIT_QIAamp  %>% 
+  filter(RNAID %in% colnames(counts_spike_filtered_CIT_QIAamp)) %>%
+  dplyr::select(RNAID, Donor, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_CIT_QIAamp) >= 30
+counts_spike_filtered_CIT_QIAamp <- counts_spike_filtered_CIT_QIAamp[keep,]
+keep <- apply(counts_spike_filtered_CIT_QIAamp, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_CIT_QIAamp <- counts_spike_filtered_CIT_QIAamp[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_CIT_QIAamp  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="RNAID", values_to="count"),annotation_CIT_QIAamp) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts >=3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_CIT_QIAamp <- counts_spike_filtered_CIT_QIAamp[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_CIT_QIAamp))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+```
+
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_filtered_CIT_QIAamp.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### CIT timepoint comparisons T0 vs T4
+
+```{r}
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_CITQIAamp_T0vsT4 <- as.data.frame(res)
+results_CITQIAamp_T0vsT4  <- rownames_to_column(results_CITQIAamp_T0vsT4 ,"ensembl_gene_id")
+
+results_CITQIAamp_T0vsT4  <- left_join(results_CITQIAamp_T0vsT4 , genes_ens)
+results_CITQIAamp_T0vsT4  <- left_join(results_CITQIAamp_T0vsT4 , genes_length)
+
+results_CITQIAamp_T0vsT4  <- results_CITQIAamp_T0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_CITQIAamp_T0vsT4  %>% mutate(contrast="CITQIAamp_T0vsT4_phase2"))
+datatable(results_CITQIAamp_T0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_CITQIAamp_T0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_CITQIAamp_T0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_CITQIAamp_T0vsT4$logFC, results_CITQIAamp_T0vsT4$hgnc_symbol)
+fgseaRes_CITQIAamp_T0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_CITQIAamp_T0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="CITQIAamp_T0vsT4_phase2"))
+```
+
+### CIT timepoint comparisons T0 vs T16
+
+```{r}
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_CITQIAamp_T0vsT16 <- as.data.frame(res)
+results_CITQIAamp_T0vsT16  <- rownames_to_column(results_CITQIAamp_T0vsT16 ,"ensembl_gene_id")
+
+results_CITQIAamp_T0vsT16  <- left_join(results_CITQIAamp_T0vsT16 , genes_ens)
+results_CITQIAamp_T0vsT16  <- left_join(results_CITQIAamp_T0vsT16 , genes_length)
+
+results_CITQIAamp_T0vsT16  <- results_CITQIAamp_T0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_CITQIAamp_T0vsT16  %>% mutate(contrast="CITQIAamp_T0vsT16_phase2"))
+datatable(results_CITQIAamp_T0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_CITQIAamp_T0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_CITQIAamp_T0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_CITQIAamp_T0vsT16$logFC, results_CITQIAamp_T0vsT16$hgnc_symbol)
+fgseaRes_CITQIAamp_T0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_CITQIAamp_T0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="CITQIAamp_T0vsT16_phase2"))
+```
+
+## Serum_MIR
+
+```{r}
+annotation_Serum_MIR <- sample_annotation_phase2 %>% filter(Tube == "serum", RNAisolation=="miRNeasySPkit") %>% mutate(Donor=gsub("-","_",Donor))
+
+counts_spike_filtered_Serum_MIR <- counts_phase2 %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts_phase2)[colnames(counts_phase2) %in% annotation_Serum_MIR $RNAID])
+
+design_matrix <- annotation_Serum_MIR  %>% 
+  filter(RNAID %in% colnames(counts_spike_filtered_Serum_MIR)) %>%
+  dplyr::select(RNAID, Donor, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_Serum_MIR) >= 30
+counts_spike_filtered_Serum_MIR <- counts_spike_filtered_Serum_MIR[keep,]
+keep <- apply(counts_spike_filtered_Serum_MIR, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_Serum_MIR <- counts_spike_filtered_Serum_MIR[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_Serum_MIR  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="RNAID", values_to="count"),annotation_Serum_MIR) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts >=3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_Serum_MIR <- counts_spike_filtered_Serum_MIR[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_Serum_MIR))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+```
+
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_filtered_Serum_MIR.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### Serum timepoint comparisons T0 vs T4
+
+```{r}
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_SerumMIR_T0vsT4 <- as.data.frame(res)
+results_SerumMIR_T0vsT4  <- rownames_to_column(results_SerumMIR_T0vsT4 ,"ensembl_gene_id")
+
+results_SerumMIR_T0vsT4  <- left_join(results_SerumMIR_T0vsT4 , genes_ens)
+results_SerumMIR_T0vsT4  <- left_join(results_SerumMIR_T0vsT4 , genes_length)
+
+results_SerumMIR_T0vsT4  <- results_SerumMIR_T0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_SerumMIR_T0vsT4  %>% mutate(contrast="SerumMIR_T0vsT4_phase2"))
+datatable(results_SerumMIR_T0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_SerumMIR_T0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_SerumMIR_T0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_SerumMIR_T0vsT4$logFC, results_SerumMIR_T0vsT4$hgnc_symbol)
+fgseaRes_SerumMIR_T0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_SerumMIR_T0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="SerumMIR_T0vsT4_phase2"))
+```
+
+### Serum timepoint comparisons T0 vs T16
+
+```{r}
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_SerumMIR_T0vsT16 <- as.data.frame(res)
+results_SerumMIR_T0vsT16  <- rownames_to_column(results_SerumMIR_T0vsT16 ,"ensembl_gene_id")
+
+results_SerumMIR_T0vsT16  <- left_join(results_SerumMIR_T0vsT16 , genes_ens)
+results_SerumMIR_T0vsT16  <- left_join(results_SerumMIR_T0vsT16 , genes_length)
+
+results_SerumMIR_T0vsT16  <- results_SerumMIR_T0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_SerumMIR_T0vsT16  %>% mutate(contrast="SerumMIR_T0vsT16_phase2"))
+datatable(results_SerumMIR_T0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_SerumMIR_T0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_SerumMIR_T0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_SerumMIR_T0vsT16$logFC, results_SerumMIR_T0vsT16$hgnc_symbol)
+fgseaRes_SerumMIR_T0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_SerumMIR_T0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="SerumMIR_T0vsT16_phase2"))
+```
+
+## Serum_QIAamp
+
+```{r}
+annotation_Serum_QIAamp <- sample_annotation_phase2 %>% filter(Tube == "serum", RNAisolation=="QIAamp") %>% mutate(Donor=gsub("-","_",Donor))
+
+counts_spike_filtered_Serum_QIAamp <- counts_phase2 %>% 
+  filter(grepl("ENSG",ensembl_gene_id)) %>% 
+  mutate_if(is.numeric, round) %>% 
+  column_to_rownames("ensembl_gene_id") %>% 
+  dplyr::select(colnames(counts_phase2)[colnames(counts_phase2) %in% annotation_Serum_QIAamp $RNAID])
+
+design_matrix <- annotation_Serum_QIAamp  %>% 
+  filter(RNAID %in% colnames(counts_spike_filtered_Serum_QIAamp)) %>%
+  dplyr::select(RNAID, Donor, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+mm <- model.matrix(~0 + TimeLapse, data=design_matrix)
+
+#prefilter
+keep <- rowSums(counts_spike_filtered_Serum_QIAamp) >= 30
+counts_spike_filtered_Serum_QIAamp <- counts_spike_filtered_Serum_QIAamp[keep,]
+keep <- apply(counts_spike_filtered_Serum_QIAamp, 1, function(x) sum(x>=10)>=3)
+counts_spike_filtered_Serum_QIAamp <- counts_spike_filtered_Serum_QIAamp[keep,]
+
+#filter
+filtered_list <- left_join(counts_spike_filtered_Serum_QIAamp  %>% mutate_if(is.numeric, ~ifelse((.)>=10, TRUE, FALSE)) %>% rownames_to_column("ensembl_gene_id") %>% pivot_longer(-ensembl_gene_id,names_to="RNAID", values_to="count"),annotation_Serum_QIAamp) %>% group_by(TimeLapse, ensembl_gene_id) %>% summarise(samplesabove10=sum(count)) %>% group_by(ensembl_gene_id) %>% summarise(maxnsamples10counts = max(samplesabove10)) %>% filter(maxnsamples10counts >=3)
+keep <- filtered_list$ensembl_gene_id
+
+counts_spike_filtered_Serum_QIAamp <- counts_spike_filtered_Serum_QIAamp[keep,]
+
+d <- DGEList(as.matrix(counts_spike_filtered_Serum_QIAamp))
+
+plotMDS(d)
+
+y <- voom(d,mm, plot=T)
+
+fit <-lmFit(y,mm)
+
+```
+
+
+### Visualise dimensional reduction
+
+```{r}
+counts_normalized <- log2(cpm(d)+1)
+
+write_tsv(rownames_to_column(as.data.frame(counts_normalized), "ensembl_gene_id"), "counts_normalised_filtered_Serum_QIAamp.tsv")
+
+ggplot(pivot_longer(as.data.frame(counts_normalized), everything()), aes(x=name,y=value))+
+  geom_boxplot()+
+  theme_boxplot
+
+sampleDists <- dist(t(counts_normalized))
+sampleDistMatrix <- as.matrix(sampleDists)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+### Serum timepoint comparisons T0 vs T4
+
+```{r}
+contr <- makeContrasts(TimeLapseT04 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_SerumQIAamp_T0vsT4 <- as.data.frame(res)
+results_SerumQIAamp_T0vsT4  <- rownames_to_column(results_SerumQIAamp_T0vsT4 ,"ensembl_gene_id")
+
+results_SerumQIAamp_T0vsT4  <- left_join(results_SerumQIAamp_T0vsT4 , genes_ens)
+results_SerumQIAamp_T0vsT4  <- left_join(results_SerumQIAamp_T0vsT4 , genes_length)
+
+results_SerumQIAamp_T0vsT4  <- results_SerumQIAamp_T0vsT4  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_SerumQIAamp_T0vsT4  %>% mutate(contrast="SerumQIAamp_T0vsT4_phase2"))
+datatable(results_SerumQIAamp_T0vsT4  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_SerumQIAamp_T0vsT4, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_SerumQIAamp_T0vsT4 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_SerumQIAamp_T0vsT4$logFC, results_SerumQIAamp_T0vsT4$hgnc_symbol)
+fgseaRes_SerumQIAamp_T0vsT4 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_SerumQIAamp_T0vsT4 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="SerumQIAamp_T0vsT4_phase2"))
+```
+
+### Serum timepoint comparisons T0 vs T16
+
+```{r}
+contr <- makeContrasts(TimeLapseT16 - TimeLapseT0, levels= colnames(coef(fit)))
+tmp <- contrasts.fit(fit, contr)
+tmp <- eBayes(tmp)
+
+res <- topTable(tmp, n=Inf)
+results_SerumQIAamp_T0vsT16 <- as.data.frame(res)
+results_SerumQIAamp_T0vsT16  <- rownames_to_column(results_SerumQIAamp_T0vsT16 ,"ensembl_gene_id")
+
+results_SerumQIAamp_T0vsT16  <- left_join(results_SerumQIAamp_T0vsT16 , genes_ens)
+results_SerumQIAamp_T0vsT16  <- left_join(results_SerumQIAamp_T0vsT16 , genes_length)
+
+results_SerumQIAamp_T0vsT16  <- results_SerumQIAamp_T0vsT16  %>% 
+  mutate(significant = ifelse(abs(logFC)>2 & adj.P.Val<0.05, "yes", "no")) %>% 
+  arrange(t) %>%
+  mutate(rankpadj = rank(adj.P.Val), label= ifelse(rankpadj<20, hgnc_symbol, ""))
+
+DE_genes_table <- bind_rows(DE_genes_table, results_SerumQIAamp_T0vsT16  %>% mutate(contrast="SerumQIAamp_T0vsT16_phase2"))
+datatable(results_SerumQIAamp_T0vsT16  %>% filter(adj.P.Val<0.05))
+```
+
+```{r}
+ggplot(results_SerumQIAamp_T0vsT16, aes(x=logFC, y=-log10(P.Value), color=significant))+
+  geom_point()+
+  geom_label_repel(data=results_SerumQIAamp_T0vsT16 %>% filter(label!=""), aes(x=logFC, y=-log10(P.Value), label=label))+
+  theme_point+
+  theme(legend.position = "none")+
+  scale_color_manual(values=color_panel)
+```
+
+
+```{r}
+ranks <- setNames(results_SerumQIAamp_T0vsT16$logFC, results_SerumQIAamp_T0vsT16$hgnc_symbol)
+fgseaRes_SerumQIAamp_T0vsT16 <- fgsea(pathways, ranks, minSize=15, maxSize=500)
+
+topPathways <- fgseaRes_SerumQIAamp_T0vsT16 %>% filter(padj<0.05)
+datatable(topPathways %>% arrange(padj) %>% select(pathway, padj, NES)) %>% formatRound(c("padj","NES"),digits=4)
+
+DE_pathways_table <- bind_rows(DE_pathways_table, topPathways %>% mutate(contrast="SerumQIAamp_T0vsT16_phase2"))
+```
+
+## Summary
+
+## Overview tables DE analysis
+
+```{r}
+DE_genes_table %>% filter(grepl('_T.*_phase2',contrast)) %>%  filter(adj.P.Val < 0.05) %>% group_by(contrast) %>% summarise(numberofgenes = n()) %>% mutate(Tube= sub("_T0vs.*","",contrast), Timepoint=sub("_phase2","",sub(".*T0vs","",contrast)), TimepointDiscrete = case_when(Timepoint %in% c('T4','T24')~ "FirstTimepoint",
+          Timepoint %in% c('T16','T72')~ "SecondTimepoint")) %>% complete(Tube, TimepointDiscrete, fill = list(numberofgenes = 0)) %>%
+  ggplot(aes(x=TimepointDiscrete, y= numberofgenes, color=Tube))+
+  geom_col()+
+  geom_line()+
+  labs(x="",y="number of differential genes \n compared to T0")+
+  theme_bar+theme(legend.position = "none")+
+  scale_color_manual(values=color_panel2)
+
+
+ggsave("DEtimepoints_phase2_ngenes.pdf", device="pdf", useDingbats=FALSE)
+
+DE_pathways_table %>% filter(grepl('_T.*_phase2',contrast)) %>% group_by(contrast) %>% summarise(numberofpathways= n()) %>% mutate(Tube= sub("_T0vs.*","",contrast), Timepoint=sub("_phase2","",sub(".*T0vs","",contrast)), TimepointDiscrete = case_when(Timepoint %in% c('T4','T24')~ "FirstTimepoint",
+          Timepoint %in% c('T16','T72')~ "SecondTimepoint")) %>% complete(Tube, TimepointDiscrete, fill = list(numberofpathways = 0)) %>%
+  ggplot(aes(x=TimepointDiscrete, y= numberofpathways, group=Tube, color=Tube))+
+  geom_point()+
+  geom_line()+
+  labs(x="",y="number of differential pathways \n compared to T0")+
+  theme_bar+theme(legend.position = "none")+
+  scale_color_manual(values=color_panel2)
+
+ggsave("DEtimepoints_phase2_pathways.pdf", device="pdf", useDingbats=FALSE)
+
+```
+
+
+## Time Fold Change analysis
+
+```{r}
+DE_genes_table %>% select(contrast, logFC) %>% filter(grepl('_T.*_phase2',contrast)) %>%
+  mutate(TubeExtraction= sub("_T0vs.*","",contrast), Timepoint=sub("_phase2","",sub(".*T0vs","",contrast)), TimepointDiscrete = case_when(Timepoint %in% c('T4','T24')~ "FirstTimepoint",
+          Timepoint %in% c('T16','T72')~ "SecondTimepoint"),
+         Tube = case_when(startsWith(TubeExtraction, "CIT")~"Citrate",
+         startsWith(TubeExtraction, "EDTA")~"EDTA",
+         startsWith(TubeExtraction, "Serum")~"serum"),
+          Extractionkit = case_when(endsWith(TubeExtraction, "MIR")~"miRNeasySPkit",
+         endsWith(TubeExtraction, "amp")~"QIAamp")) %>%
+   ggplot(aes(x=logFC,group=contrast, color=Timepoint))+
+  stat_ecdf(cex=1)+
+  geom_vline(xintercept = 0, linetype="dotted", color="grey")+
+  labs(y="cummulative percentage", x="logFC difference compared to T0")+
+  theme_point+
+  facet_grid(Extractionkit~Tube)+
+  coord_cartesian(xlim=c(-1.5, 1.5))+
+  scale_color_manual(values=c("#33A02C","#B2DF8A"))
+  
+ggsave("cumdis_timepoints_phase2.pdf", height = 7, width = 10)
+```
+
+
+# write table
+
+```{r}
+pathwayList<-list()
+for(i in unique(DE_pathways_table$contrast)){
+    pathwayList[[i]]<-DE_pathways_table[DE_pathways_table$contrast==i,]
+}
+names(pathwayList)<-unique(DE_pathways_table$contrast)
+
+### Write to Excel
+openxlsx::write.xlsx(pathwayList, file = "allDEpathways.xlsx")
+```
+
+
+
+# Phase 2 - Generate Powercalculation tables
+
+```{r}
+Tube_RNAisolationcombinations <- unique(sample_annotation_phase2 %>% filter(TimeLapse=="T0") %>% select(Tube,RNAisolation))
+
+for (i in 1:nrow(Tube_RNAisolationcombinations)){
+  tubetoselect <- as.character(Tube_RNAisolationcombinations[i,"Tube"])
+  rnaisolationtoselect <-as.character(Tube_RNAisolationcombinations[i,"RNAisolation"])
+  RNAIDs <- sample_annotation_phase2 %>% filter(Tube==tubetoselect, RNAisolation==rnaisolationtoselect, TimeLapse=="T0")
+  counts_to_normalize <- counts_phase2[,c("ensembl_gene_id",RNAIDs$RNAID)] %>% column_to_rownames("ensembl_gene_id")
+  
+  
+  design_matrix <- RNAIDs %>%
+  dplyr::select(RNAID, Donor, Tube, TimeLapse) %>% 
+  column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+  #prefilter
+  keep <- apply(counts_to_normalize, 1, function(x) sum(x>=10)>=5)
+  counts_to_normalize <- counts_to_normalize[keep,]
+
+  d <- DGEList(as.matrix(counts_to_normalize))
+
+  plotMDS(d)
+  
+  y <- voom(d,plot=T)
+  
+  fit <-lmFit(y)
+  
+  write_tsv(as.data.frame(cpm(y)),paste0("counts_log2normalised_phase2_",tubetoselect,"_",rnaisolationtoselect,".tsv"))
+
+}
+
+```
+
+```{r}
+Tube_RNAisolationcombinations <- unique(sample_annotation_phase2 %>% filter(TimeLapse=="T0") %>% select(Tube,RNAisolation,RNAID))
+
+counts_to_normalize <- counts_phase2[,c("ensembl_gene_id",Tube_RNAisolationcombinations$RNAID)] %>% column_to_rownames("ensembl_gene_id")
+  
+design_matrix <- Tube_RNAisolationcombinations %>% dplyr::select(RNAID, RNAisolation, Tube) %>% column_to_rownames("RNAID") %>% mutate_all(as_factor)
+
+  #prefilter
+  keep <- apply(counts_to_normalize, 1, function(x) sum(x>=10)>=30)
+  counts_to_normalize <- counts_to_normalize[keep,]
+  
+  mm <- model.matrix(~0 + Tube + RNAisolation, data=design_matrix)
+
+  d <- DGEList(as.matrix(counts_to_normalize))
+
+  plotMDS(d)
+  
+  y <- voom(d,mm,plot=T)
+  
+  fit <-lmFit(y)
+  
+  write_tsv(as.data.frame(cpm(y)),paste0("counts_log2normalised_phase2_alltubes_allisolations.tsv"))
+
+```

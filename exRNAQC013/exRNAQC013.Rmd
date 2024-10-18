@@ -67,7 +67,7 @@ require(plotly)
 require(ggpubr)
 require(DT)
 require(tidyverse)
-source("../../Resources/HelperFunctions.R")
+source("../Resources/HelperFunctions.R")
 # plot style
 theme_point<-theme_bw()+theme(strip.background = element_blank())
 theme_bar<-theme_bw()+theme(axis.text.x = element_text(angle=90, vjust=0.5, hjust=1),strip.background = element_blank(),axis.ticks.x = element_blank(),axis.line.x = element_blank())
@@ -84,21 +84,18 @@ names(color_panel_spikes) <- c("LP1","MIMAT","RC1","RC2")
 color_panel_spikes2 <- c("#23496b","#ffbf00","gray","#ffbf01","orange","#23496b")
 names(color_panel_spikes2) <- c("LP","RC","MIMAT","RC1","RC2","LP1")
 
-data_path <- "../data/runs/800ksubsamp/mergedTxts/"
-log_path <- "../data/runs/800ksubsamp/"
+data_path <- "./data_raw/"
 
 
 full_nr <- format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
-source("../../Resources/HelperFunctions.R")
 
-annot <- "../Annotation_exRNAQC013.xlsx"
+annot <- "Annotation_exRNAQC013.xlsx"
 sample_annotation <- read_excel(annot, sheet = "Annotation_exRNAQC013", skip = 0, col_names = TRUE )
 sample_annotation<-sample_annotation %>% mutate(SampleID= paste0(GraphTube,"_",BiologicalReplicate, "_",TimeLapse))
 sample_annotation<-sample_annotation %>% mutate(PlasmaInputVml= PlasmaInputV/1000)
 sample_annotation$TubeType <- ifelse(sample_annotation$Tube %in% c("DNA Streck", "Biomatrica", "RNA Streck", "PAXgene", "Roche"), "preservation", "non-preservation")
 sample_annotation$GraphTube <- paste0(sample_annotation$GraphTube, "_", sample_annotation$TimeLapse)
 sample_annotation <- sample_annotation %>% filter(!is.na(index_prct))
-
 ```
 
 
@@ -196,18 +193,17 @@ Counts obtains were preprocessed and merged into seperate count matrices (see `m
 
 
 ```{r readdata, warning=FALSE, error=FALSE}
-miRNAs <- data.table::fread(paste0(data_path, "allmiRs_subs.txt"), header=T, data.table = F)
-spikes <- data.table::fread(paste0(data_path, "allspikes_subs.txt"), header=T, data.table = F)
-reads <- data.table::fread(paste0(data_path, "allreads_subs.txt"), header=T, data.table = F)
-contam <- data.table::fread(paste0(data_path, "allcontam_subs.txt"), header=T, data.table = F)
+miRNAs <- data.table::fread(paste0(data_path, "allmiRs.txt"), header=T, data.table = F) #download count file from ArrayExpress.
+spikes <- data.table::fread(paste0(data_path, "allspikes.txt"), header=T, data.table = F) 
 ```
-
 
 
 # Hemolysis {.tabset}
 Hemolysis was measured with Nanodrop (absorbance at 414 nm) in plasma across all tubes. Overall, we can see that there is less hemolysis in non-preservation tubes and there is more hemolysis in preservation tubes and at later timepoints. Hemolysis is also our first metric. Furthermore, Spearman rank correlation between replicate platelet measurements is high (R = 0.82).
 
 ## Hemolysis in plasma
+
+
 ```{r, warning=FALSE, message=FALSE, echo=TRUE, fig.height=5, fig.width=8}
 p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=Hemolysis_PFP, col=BiologicalReplicate, group = BiologicalReplicate))+
   geom_point()+geom_line(aes(group = BiologicalReplicate))+
@@ -219,6 +215,7 @@ p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=Hemolysis_PFP, col=BiologicalRe
   theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) + labs(title="hemolysis in PFP - split by tube", y = "abs at 414 nm", col = "", x = NULL)
 ggplotly(p1)
 ggsave("./plots/hemolysis_PFP_lineplot_byTube.pdf", plot = p1, dpi = 300)
+
 hemolysis_lineplot <- ggplot2::last_plot()
 
 p1 <- ggplot(sample_annotation,aes(x=TimeLapse,y=Hemolysis_PFP, col=Tube, group = BiologicalReplicate))+
@@ -290,49 +287,54 @@ ggsave("./plots/BasespaceIndexingPrct_lineplot.pdf", plot = p1, dpi = 300)
 ```
 
 ```{r}
-files<-list.files(log_path,recursive=TRUE)
-files<-files[grep("*line_count.txt", files)]
-reads_df <- data.frame(total_reads = as.numeric(), total_reads_after_qc = as.numeric(), UniqueID = as.character())
-for(i in 1:length(files)){
-  name_sample <- unlist(strsplit(unlist(strsplit(files[i], "/"))[1], "-"))[1]
-  #name_sample<-gsub(".*/","",sub("-[0-9]*$","",sub("_spikes.txt","",files[i])))
-  tmp<-read.table(paste0(log_path,files[i]), header=T, sep="\t", comment.char = "", skip = 0)
-  #tmp<-read.table(paste0(log_path,files[i]), header=F, sep=":", comment.char = "", skip = 4, nrows = 3)
-  total_reads_after_qc <- (tmp$qc_lines)/4
-  total_reads_start <- (tmp$orig_lines)/4
-  tmp <- data.frame(UniqueID = name_sample, total_reads = total_reads_start, total_reads_after_qc = total_reads_after_qc)
- reads_df <- bind_rows(reads_df, tmp)
-}
+# files<-list.files(log_path,recursive=TRUE)
+# files<-files[grep("*line_count.txt", files)]
+# reads_df <- data.frame(total_reads = as.numeric(), total_reads_after_qc = as.numeric(), UniqueID = as.character())
+# for(i in 1:length(files)){
+#   name_sample <- unlist(strsplit(unlist(strsplit(files[i], "/"))[1], "-"))[1]
+#   #name_sample<-gsub(".*/","",sub("-[0-9]*$","",sub("_spikes.txt","",files[i])))
+#   tmp<-read.table(paste0(log_path,files[i]), header=T, sep="\t", comment.char = "", skip = 0)
+#   #tmp<-read.table(paste0(log_path,files[i]), header=F, sep=":", comment.char = "", skip = 4, nrows = 3)
+#   total_reads_after_qc <- (tmp$qc_lines)/4
+#   total_reads_start <- (tmp$orig_lines)/4
+#   tmp <- data.frame(UniqueID = name_sample, total_reads = total_reads_start, total_reads_after_qc = total_reads_after_qc)
+#  reads_df <- bind_rows(reads_df, tmp)
+# }
+# 
+# files<-list.files(log_path,recursive=TRUE)
+# files<-files[grep("*read_count_new", files)]
+# mapped_df <- data.frame(aligned_reads = as.numeric(), UniqueID = as.character())
+# for(i in 1:length(files)){
+#   name_sample <- unlist(strsplit(unlist(strsplit(files[i], "/"))[1], "-"))[1]
+#   tmp<-read.table(paste0(log_path,files[i]), header=T, sep="\t", comment.char = "", skip = 0)
+#   mapped_reads <- tmp[1,2]
+#   tmp <- data.frame(UniqueID = name_sample, aligned_reads = mapped_reads)
+#  mapped_df <- bind_rows(mapped_df, tmp)
+# }
+# 
+# mapped_df <- merge(reads_df, mapped_df, by = "UniqueID")
+# 
+# mappedSpikes <- colSums(spikes[,-1], na.rm = TRUE) %>% melt()
+# mappedSpikes$UniqueID <- rownames(mappedSpikes)
+# colnames(mappedSpikes) <-c("spikeCounts", "UniqueID")
+# 
+# mapped_df <- merge(mapped_df, mappedSpikes)
+# mapped_df$aligned_reads_plus_spikes <- mapped_df$aligned_reads+ mapped_df$spikeCounts
+# 
+# mapped_df$prct_aligned <- (mapped_df$aligned_reads/800000)*100
+# mapped_df$prct_aligned_plus_spikes <- (mapped_df$aligned_reads_plus_spikes/800000)*100
+# 
+# mapped_df_annot <- merge(sample_annotation, mapped_df, by = "UniqueID")
+# mapped_df_melt <-mapped_df %>% melt(value.name = "reads")
+# mapped_df_melt_annot <- full_join(mapped_df_melt, sample_annotation, by = "UniqueID")
+# 
+# mapped_df_save <- merge(sample_annotation %>% select(UniqueID, SampleID), mapped_df, by = "UniqueID")
+# write_tsv(mapped_df_save, "./smallRNA_table.tsv")
 
-files<-list.files(log_path,recursive=TRUE)
-files<-files[grep("*read_count_new", files)]
-mapped_df <- data.frame(aligned_reads = as.numeric(), UniqueID = as.character())
-for(i in 1:length(files)){
-  name_sample <- unlist(strsplit(unlist(strsplit(files[i], "/"))[1], "-"))[1]
-  tmp<-read.table(paste0(log_path,files[i]), header=T, sep="\t", comment.char = "", skip = 0)
-  mapped_reads <- tmp[1,2]
-  tmp <- data.frame(UniqueID = name_sample, aligned_reads = mapped_reads)
- mapped_df <- bind_rows(mapped_df, tmp)
-}
-
-mapped_df <- merge(reads_df, mapped_df, by = "UniqueID")
-
-mappedSpikes <- colSums(spikes[,-1], na.rm = TRUE) %>% melt()
-mappedSpikes$UniqueID <- rownames(mappedSpikes)
-colnames(mappedSpikes) <-c("spikeCounts", "UniqueID")
-
-mapped_df <- merge(mapped_df, mappedSpikes)
-mapped_df$aligned_reads_plus_spikes <- mapped_df$aligned_reads+ mapped_df$spikeCounts
-
-mapped_df$prct_aligned <- (mapped_df$aligned_reads/800000)*100
-mapped_df$prct_aligned_plus_spikes <- (mapped_df$aligned_reads_plus_spikes/800000)*100
-
-mapped_df_annot <- merge(sample_annotation, mapped_df, by = "UniqueID")
+mapped_df<-read_tsv(paste0(data_path, "smallRNA_table.tsv"))
 mapped_df_melt <-mapped_df %>% melt(value.name = "reads")
 mapped_df_melt_annot <- full_join(mapped_df_melt, sample_annotation, by = "UniqueID")
-
-mapped_df_save <- merge(sample_annotation %>% select(UniqueID, SampleID), mapped_df, by = "UniqueID")
-write_tsv(mapped_df_save, "./smallRNA_table.tsv")
+mapped_df_annot <- merge(sample_annotation, mapped_df, by = "UniqueID")
 ```
 
 
@@ -359,7 +361,7 @@ p1 <- ggplot(mapped_df_melt_annot %>% filter(variable != "prct_aligned"),aes(x=r
 
 ggplotly(p1)
 
-ggsave("./plots/readsInPipeline.pdf", plot = p1, dpi = 300)
+#ggsave("./plots/readsInPipeline.pdf", plot = p1, dpi = 300)
 ```
 
 
@@ -466,7 +468,7 @@ ggsave("./plots/PrctGoingToSpikes.pdf", plot = ggplot2::last_plot(), dpi = 300)
 ## Uniformity of spikes
 spikes_annotated<-left_join(melt(spikes) %>% dplyr::rename(UniqueID=variable),sample_annotation)
 spikes_annotated[is.na(spikes_annotated)] <- 0
-spikeconc<-read_tsv("../../Resources/spike_conc.txt")
+spikeconc<-read_tsv("../Resources/spike_conc.txt")
 ```
 
 
