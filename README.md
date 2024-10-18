@@ -1,6 +1,6 @@
 # exRNAQC
 
-Quick access to HTML reports with results for each study and the list of figures: [https://oncornalab.github.io/exRNAQC](https://oncornalab.github.io/exRNAQC/)
+Quick access to HTML reports with results for each study and the list of figures: [here]([https://oncornalab.github.io/exRNAQC/](https://oncornalab.github.io/exRNAQC/))
 
 ## Full Length RNAseq
 ### Rationale
