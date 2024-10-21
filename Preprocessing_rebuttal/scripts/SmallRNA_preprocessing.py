@@ -106,7 +106,6 @@ spike_seqs = args["spike_seqs"]
 bowtie_index = args["bowtie_index"]
 data_type = args["data_type"]
 SampleList = args["SampleList"]
-base_dir=args["base_dir"]
 paired_files = read_file_to_tuples(SampleList) 
 
 for samplename, f1, f2 in paired_files:
@@ -127,9 +126,11 @@ for samplename, f1, f2 in paired_files:
         fastqc(samplename, '', 'FASTQC_original', dep=copycombine_jobid, jobsuffix='_orig')
         index += 1
         fastq_suffix = ''
+		# adapter trimming
         cutadapt_jobid = cutadapt_smallRNA(samplename, suffix=fastq_suffix, dep=None, data_type=data_type)
         fastq_suffix += '_clipped'
         index += 1
+        # Filter fastq reads per quality score
         removebadqc_jobid = removebadqc(samplename, suffix=fastq_suffix, percentage='80', quality='19', dep='', jobsuffix='', data_type=data_type)
         index += 1
         fastq_suffix = '_qc'
@@ -146,6 +147,7 @@ for samplename, f1, f2 in paired_files:
         if subsample_to_nr == '0':
             continue 
         else:
+			#subsampling
             subsstart_jobid = subsample(samplename, str(subsample_to_nr), suffix=fastq_suffix, subDIR=sub_dir, dep=removebadqc_jobid, jobsuffix='')
             fastq_suffix += '_subs'
             sub_dir = subs_mode+'/'
@@ -155,10 +157,14 @@ for samplename, f1, f2 in paired_files:
     else:
         subsstart_jobid = removebadqc_jobid
         # Process the files
+	# Collapse identical sequences in a FASTA/FASTQ file.
     prepcounts_jobid = prepcounts(samplename,fastq_suffix, subDIR=sub_dir, dep=subsstart_jobid, spike_seqs=spike_seqs)
     index += 1
+	# mapping with bowtie
     mapbowtie_jobid = mapbowtie(samplename, refgenome=bowtie_index, dep=prepcounts_jobid, data_type=data_type)
     index += 1
+	# Annotated mapped reads as isomiRs, mature miRNA, contaminants, tRNA, piRNA contaminants, read that map to stop oligo, not annotated
+	# for details check the script match_bowtie_outputv5.pl
     annotate_jobid = annotate(samplename, dep=mapbowtie_jobid)
     index += 1
     # Gzip all fastq files

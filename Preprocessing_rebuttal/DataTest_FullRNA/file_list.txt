@@ -1,0 +1,2 @@
+RNA022163	../FullRNA_DataTest_subs/RNA022163_sub_R1.fastq.gz	../FullRNA_DataTest_subs/RNA022163_sub_R2.fastq.gz
+RNA022164	../FullRNA_DataTest_subs/RNA022164_sub_R1.fastq.gz	../FullRNA_DataTest_subs/RNA022164_sub_R2.fastq.gz

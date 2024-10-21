@@ -198,6 +198,28 @@ def subsample(sampleID, fastq1, fastq2=None, nreads=1000, suffix='', output_dir=
         r1 = os.path.join(output_path, f'{sampleID}_1{suffix}_subs.fastq.gz')
         r2 = os.path.join(output_path, f'{sampleID}_2{suffix}_subs.fastq.gz')
         return os.path.abspath(r1), os.path.abspath(r2)
+
+def subsample_v2(sampleID, fastq1, fastq2=None, nreads=1000, suffix='', output_dir=".", dedup_mode='clumpify', data_type='pe'):
+    """ Seqtk subsampling
+    Downsample fastq files to x number of reads (take min of all samples)
+    -s100: sets the seed to a fixed number (here 100, but may be any number) in order to have the same result if you rerun this part of code
+    """
+    output_path = os.path.join(output_dir, dedup_mode)
+    os.makedirs(output_path, exist_ok=True)
+    
+    if data_type == 'se':
+        command = f'seqtk sample -s 100 {fastq1} {nreads} > {output_path}/{sampleID}{suffix}_subs.fastq'
+        subprocess.run(command, shell=True, check=True)
+        r1 = os.path.join(output_path, f'{sampleID}{suffix}_subs.fastq')
+        return os.path.abspath(r1), None
+    elif data_type == 'pe':
+        command1 = f'seqtk sample -s 100 {fastq1} {nreads} > {output_path}/{sampleID}_1{suffix}_subs.fastq'
+        command2 = f'seqtk sample -s 100 {fastq2} {nreads} > {output_path}/{sampleID}_2{suffix}_subs.fastq'
+        subprocess.run(command1, shell=True, check=True)
+        subprocess.run(command2, shell=True, check=True)
+        r1 = os.path.join(output_path, f'{sampleID}_1{suffix}_subs.fastq')
+        r2 = os.path.join(output_path, f'{sampleID}_2{suffix}_subs.fastq')
+        return os.path.abspath(r1), os.path.abspath(r2)
     
 
 
@@ -218,7 +240,8 @@ def clumpifydupremoval_trimmed(sampleID, fastq1, fastq2=None, outDIR='.', subst=
         recommendations: NextSeq = 40 (and spany=t); HiSeq 1T = 40; HiSeq 2500 = 40; HiSeq 3k/4k = 2500; Novaseq = 12000
     spany=f: Allow reads to be considered optical duplicates if they are on different tiles, but are within dupedist in the y-axis.  Should only be enabled when looking for tile-edge duplicates (as in NextSeq).
     """
-    output_path = os.path.join(outDIR, dedup_mode)
+    output_path = os.path.join(outDIR, dedup_mode, f"{sampleID}_clumpout")
+    output_path_gzip_files = os.path.join(outDIR, dedup_mode)
     os.makedirs(output_path, exist_ok=True)
     
     if data_type == 'se':
@@ -252,8 +275,8 @@ def clumpifydupremoval_trimmed(sampleID, fastq1, fastq2=None, outDIR='.', subst=
         trimmed_fastq2 = os.path.join(output_path, f'{sampleID}_temptrim_2.fastq')
         tempclumped_fastq1 = os.path.join(output_path, f'{sampleID}_tempclumped_1.fastq')
         tempclumped_fastq2 = os.path.join(output_path, f'{sampleID}_tempclumped_2.fastq')
-        clumped_fastq1 = os.path.join(output_path, f'{sampleID}_clumped_1.fastq')
-        clumped_fastq2 = os.path.join(output_path, f'{sampleID}_clumped_2.fastq')
+        clumped_fastq1 = os.path.join(output_path_gzip_files, f'{sampleID}_clumped_1.fastq')
+        clumped_fastq2 = os.path.join(output_path_gzip_files, f'{sampleID}_clumped_2.fastq')
         
         # Trim reads
         subprocess.run(['cutadapt', '--pair-filter=both', '-l', '80', '-o', trimmed_fastq1, '-p', trimmed_fastq2, fastq1, fastq2], check=True)
@@ -281,8 +304,12 @@ def clumpifydupremoval_trimmed(sampleID, fastq1, fastq2=None, outDIR='.', subst=
         with open(clumped_fastq2, 'w') as f:
             subprocess.run(f'grep -Ff {os.path.abspath(tempnames2)} -A3 {os.path.abspath(trimmed_fastq2)} | grep -v -- "^--$"', shell=True, stdout=f, check=True)
         
+        temp_files = f'rm -r {output_path}'
+        subprocess.run(temp_files, shell=True, check=True)
+
         subprocess.run(['gzip', clumped_fastq1], check=True)
         subprocess.run(['gzip', clumped_fastq2], check=True)
+
         return f'{clumped_fastq1}.gz', f'{clumped_fastq2}.gz'
 
 def bamtofastqfile(sampleID, bamIN, output_dir, dedup_mode, data_type):
@@ -450,6 +477,60 @@ def strandedness(sampleID, bamIN, output_dir, dedup_mode, exon_bed, data_type, s
 
     return final_output
 
+def star_alignment_strandness(sampleID, fastq1, fastq2, output_dir, dedup_mode, data_type, star_index, gtf):
+        """ Run STAR alignment and return the path to the resulting BAM file """
+        output_path = os.path.join(output_dir, dedup_mode)
+        os.makedirs(output_path, exist_ok=True)
+
+        if data_type == 'se':
+            command = [
+                'STAR', '--runThreadN', '10', '--outFileNamePrefix', f'{output_path}/{sampleID}.', '--readFilesIn', fastq1,
+                '--genomeDir', star_index, '--sjdbGTFfile', gtf, '--outSAMtype', 'BAM', 'SortedByCoordinate', '--outReadsUnmapped', 'Fastx',
+                '--twopassMode', 'Basic', '--outMultimapperOrder', 'Random', '--outSAMmultNmax', '-1', '--outFilterMultimapNmax', '10',
+                '--outSAMprimaryFlag', 'AllBestScore', '--outFilterScoreMinOverLread', '0.66', '--outFilterMatchNminOverLread', '0.66', '--outFilterMatchNmin', '20'
+            ]
+        elif data_type == 'pe':
+            command = [
+                'STAR', '--runThreadN', '10', '--outFileNamePrefix', f'{output_path}/{sampleID}.', '--readFilesIn', fastq1, fastq2,
+                '--genomeDir', star_index, '--sjdbGTFfile', gtf, '--outSAMtype', 'BAM', 'SortedByCoordinate', '--outReadsUnmapped', 'Fastx',
+                '--twopassMode', 'Basic', '--outMultimapperOrder', 'Random', '--outSAMmultNmax', '-1', '--outFilterMultimapNmax', '10',
+                '--outSAMprimaryFlag', 'AllBestScore', '--outFilterScoreMinOverLread', '0.66', '--outFilterMatchNminOverLread', '0.66', '--outFilterMatchNmin', '20'
+            ]
+        subprocess.run(command, check=True)
+        #removing unmmaped and Log files
+        unmmaped = f'rm {os.path.join(output_path, f"{sampleID}.Unmapped*")}'
+        subprocess.run(unmmaped, shell=True, check=True)
+        log = f'rm {os.path.join(output_path, f"{sampleID}.Log*")}'
+        subprocess.run(log, shell=True, check=True)
+        extra = f'rm {os.path.join(output_path, f"{sampleID}.SJ*")}'
+        subprocess.run(extra, shell=True, check=True)
+        bam_file = os.path.join(output_path, f'{sampleID}.Aligned.sortedByCoord.out.bam')
+        return bam_file
+
+def run_infer_experiment(sampleID, bamIN, output_dir, dedup_mode, exon_bed):
+    """ Run infer_experiment.py to get strandedness and return the path to the output file."""
+    output_path = os.path.join(output_dir, dedup_mode)
+    os.makedirs(output_path, exist_ok=True)
+
+    command = [
+        'infer_experiment.py', '-r', exon_bed, '-i', bamIN
+    ]
+    output_file = os.path.join(output_path, f'{sampleID}_RSeQC_output_all.txt')
+    with open(output_file, 'w') as f:
+        subprocess.run(command, stdout=f, check=True)
+    percentage = "0.0"
+    with open(output_file, 'r') as f:
+        for line in f:
+            if "1+-" in line:
+                percentage = line.split(":")[1].strip()
+                break
+
+    final_output = os.path.join(output_path, f'{sampleID}_RSeQC_output.txt')
+    with open(final_output, 'w') as f:
+        f.write(f'{sampleID} {percentage}\n')
+
+    return final_output
+
 def sortbambyname(sampleID, bamIN, bamOUT, output_dir, dedup_mode):
     """ Some algorithms only run on name sorted bam files instead of coordinate sorted ones, this function makes the conversion from coo to name sorted.
     -n: sort by read names instead of chromosomal coordinates
@@ -537,7 +618,7 @@ def idxstat(sampleID, bamIN, output_dir, dedup_mode):
     return idxstat_output
 
 def main():
-    #Parameters
+    #Load Parameters
     parser = argparse.ArgumentParser()
     parser.add_argument('--config',required=True, help='path to yaml config file')
     yaml_file = parser.parse_args()
@@ -616,18 +697,22 @@ def main():
             if subsample_to_nr == '0':
                 continue # Skip subsampling
             else:
-                trim1, trim2 = subsample(sampleID, trim1, trim2, int(subsample_to_nr), fastq_suffix, output_dir_sample, dedup_mode, data_type)
+                trim1, trim2 = subsample_v2(sampleID, trim1, trim2, int(subsample_to_nr), fastq_suffix, output_dir_sample, dedup_mode, data_type)
                 print(f"Subsampled to {subsample_to_nr} reads, files: {trim1} and {trim2}")
                 fastq_suffix += '_subs'
+        
         bam_coord = sampleID+'.Aligned.sortedByCoord.out.bam'
         bam_name = sampleID+'.Aligned.sortedByName.out.bam'
         # Step 4 deduplication
         if deduplication == 'clumpify':
-                strandedness(sampleID, bam_coord, output_dir_sample, dedup_mode, exon_bed, data_type, star_index, gtf)
+                # get strandedness
+                bamIN = star_alignment_strandness(sampleID, trim1, trim2, output_dir_sample, dedup_mode, data_type, star_index, gtf)
+                run_infer_experiment(sampleID, bamIN, output_dir_sample, dedup_mode, exon_bed)
+                #clumpify duplicate removal
                 r1_dep, r2_dep = clumpifydupremoval_trimmed(sampleID, trim1, trim2, outDIR=output_dir_sample, dedup_mode=dedup_mode, data_type=data_type)
                 print(f"Clumpify deduplication complete. Files: {r1_dep} and {r2_dep}")
                 fastq_suffix += '_clumped'
-                # step 5: Run kallisto quantification
+                # Run kallisto quantification
                 if subs_timing == 'afterclumpify':
                     if subsample_to_nr == '0':
                         continue #go to next samplename
@@ -639,33 +724,39 @@ def main():
                 fastqc(r1_dep, r2_dep, fastq_suffix, output_dir_sample)
                 kal_out = countskallisto_local(sampleID, r1_dep, r2_dep, output_dir_sample, dedup_mode, data_type, kal_index, fragmentmean=fragmean, fragmentsd=fragsd, stranded='no')
                 print(f'kallisto: {kal_out}')
+                # STAR alignment
                 star = alignment(sampleID, r1_dep, r2_dep, output_dir_sample, dedup_mode, star_index, gtf, data_type)
                 bam_coord = os.path.join(star, bam_coord)
                 print(f'STAR alignment: {star}')
+                # sort bam file by name
                 bam_name = sortbambyname(sampleID, bamIN=bam_coord, bamOUT=bam_name, output_dir=output_dir_sample, dedup_mode=dedup_mode)
                 print(f'Sorted BAM file: {bam_name}')
         else:
+            # star alignment
             star = alignment(sampleID, trim1, trim2, output_dir_sample, dedup_mode, star_index, gtf, data_type)
             bam_IN = os.path.join(star, bam_coord)
+            # get stradedness
             strandedness(sampleID, bam_IN, output_dir_sample, dedup_mode, exon_bed, data_type, star_index, gtf)
             if deduplication == 'picard':
                 bam_coord_nodedup = os.path.join(star, bam_coord)
+                # Deduplication with Picard
                 bam_coord = sampleID+'.Aligned.sortedByCoord.picard.bam'
-                bam_picard = picarddupremcoord(sampleID, bamIN=bam_coord_nodedup, bamOUT=bam_coord, output_dir=output_dir_sample, dedup_mode=dedup_mode)
+                star_picard = picarddupremcoord(sampleID, bamIN=bam_coord_nodedup, bamOUT=bam_coord, output_dir=output_dir_sample, dedup_mode=dedup_mode)
+                bam_coord = star_picard
                 bam_name = sampleID+'.Aligned.sortedByName.picard.bam'
-                bam_name = sortbambyname(sampleID, bamIN=bam_picard, bamOUT=bam_name, output_dir=output_dir_sample, dedup_mode=dedup_mode)
+                bam_name = sortbambyname(sampleID, bamIN=star_picard, bamOUT=bam_name, output_dir=output_dir_sample, dedup_mode=dedup_mode)
                 star_fq1, star_fq2 = bamtofastqfile(sampleID, bam_name, output_dir_sample, dedup_mode, data_type)
                 fastq_suffix = '_picard'
+                # Kallisto quantification
                 kal_out = countskallisto_local(sampleID, star_fq1, star_fq2, output_dir_sample, dedup_mode, data_type, kal_index, fragmentmean=fragmean, fragmentsd=fragsd, stranded='no')
             else:
-                star_sort = sortbambyname(bamIN=bam_picard, bamOUT=bam_name, output_dir=output_dir_sample, dedup_mode=dedup_mode)
+                star_sort = sortbambyname(bamIN=star_picard, bamOUT=bam_name, output_dir=output_dir_sample, dedup_mode=dedup_mode)
     
-        # HTSeq quantification (bam needs to be sorted by name)
+    #     # HTSeq quantification (bam needs to be sorted by name)
         countshtseq(sampleID, bam_name, gtf, output_dir_sample, dedup_mode, stranded='no')
-        # bam_coord = os.path.join(star, bam_coord)
         idxstat(sampleID, bam_coord, output_dir_sample, dedup_mode)
         print(f"Finished processing {r1} and {r2}")
-    # Unload the STAR index from memory after processing
+    # # Unload the STAR index from memory after processing
     unload_star_index(star_index)
     
 

@@ -1,14 +1,14 @@
-SampleListFile: "../DataTest/file_list.txt"
-output_dir: '../DataTestOut/'  # Directory to store output files
-repeat_analysis: 'yes'
+SampleListFile: "../FullRNA_DataTest_subs/file_list.txt" #path to the sample sheet
+output_dir: '../Out_FullRNA/'  # Directory to store output files
+repeat_analysis: 'no' #first set to no, Then calculate level of subsampling, change to "yes' and repeat analysis
 data_type: 'pe' #single end of paired end
 deduplication: 'picard' #picard or clumpify
 subs_timing: 'start' 
-subsample_to_nr: '5000' #number of read to subsampling
+subsample_to_nr: '100000' #number of read to subsampling
 kal_index: "../resources/Kall_idx_exRNAQC" #Kallisto index
 fragmean: None #kallisto parameters
 fragsd: None #kallisto parameters
-star_index: "/data/gent/vo/000/gvo00027/resources/STAR_index/Homo_sapiens/GRCh38.dna.primary_assembly.chrIS_spikes_45S.star_index"
-gtf: "/data/gent/vo/000/gvo00027/resources/Ensembl_transcriptomes/Homo_sapiens/GRCh38/Homo_sapiens.GRCh38.109.chrIS_spikes_45S.gtf"
-exon_bed: "/data/gent/vo/000/gvo00027/resources/Ensembl_bedregions/Homo_sapiens/GRCh38/Homo_sapiens.GRCh38.109.chrIS_spikes_45S_exons_sorted_merged.bed"
+exon_bed: "../resources/GRCh38/Homo_sapiens.GRCh38.109.chrIS_spikes_45S_exons_sorted_merged.bed" #follow the instructions to build this files
+star_index: "../resources/star_index" #follow the instructions to build this files
+gtf: "../resources/GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf" #follow the instructions to build this files
 adaptercontam: "truseq" #truseq, nextera or no

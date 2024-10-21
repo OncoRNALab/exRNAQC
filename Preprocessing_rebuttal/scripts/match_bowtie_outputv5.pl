@@ -72,9 +72,9 @@ print "[".sprintf("%.6f", $time_diff)."s]\n";
 $prev_time = $curr_time;
 
 # Read miRbase file ===============================================================================
-# Inlezen van miRbase-file met genomische coordinaten van mature en precursor miRNAs.
-# Er worden 2 hashes aangemaakt, één voor mature miRNAs en één voor precursors.
-# Keys van deze hashes zijn MIMAT- of MI-ids die op hun beurt gelinkt zijn aan chromosoom, start en stop via nieuwe hash (hash of hashes).
+# Read miRbase file with genomic coordinates of mature and precursor miRNAs.
+# 2 hashes are created, one for mature miRNAs and one for precursors.
+# Keys of these hashes are MIMAT or MI ids which in turn are linked to chromosome, start and stop via new hash (hash of hashes).
 print "Reading miRbase file... ";
 
 my %mature;
@@ -132,8 +132,8 @@ print "[".sprintf("%.6f", $time_diff)."s]\n";
 $prev_time = $curr_time;
 
 # Read Ensembl contaminants file ==================================================================
-# Inlezen van contaminants file met genomische coordinaten van snoRNA, snRNA, MT_tRNA, MT_rRNA, rRNA en miscRNA uit Ensembl.
-# Er wordt 1 hash aangemaakt, keys van deze hash zijn contaminant-ids die op hun beurt gelinkt zijn aan chromosoom, start, stop, strand en type via nieuwe hash (hash of hashes).
+# Loading contaminants file with genomic coordinates of snoRNA, snRNA, MT_tRNA, MT_rRNA, rRNA and miscRNA from Ensembl.
+# 1 hash is created, keys of this hash are contaminant-ids which in turn are linked to chromosome, start, stop, strand and type via new hash (hash of hashes).
 print "Reading Ensembl contaminants file... ";
 
 my %contam_ens;
@@ -181,8 +181,8 @@ $prev_time = $curr_time;
 
 
 # Read UCSC tRNA contaminants file ================================================================
-# Inlezen van contaminants file met genomische coordinaten van tRNA uit UCSC.
-# Er wordt 1 hash aangemaakt, keys van deze hash zijn contaminant-ids die op hun beurt gelinkt zijn aan chromosoom, start, stop, strand en type via nieuwe hash (hash of hashes).
+# Loading contaminants file with genomic coordinates of tRNA from UCSC.
+# 1 hash is created, keys of this hash are contaminant-ids which in turn are linked to chromosome, start, stop, strand and type via new hash (hash of hashes).
 print "Reading UCSC tRNA contaminants file... ";
 
 my %contam_ucsc;
@@ -231,8 +231,8 @@ print "[".sprintf("%.6f", $time_diff)."s]\n";
 $prev_time = $curr_time;
 
 # Read UCSC piRNA contaminants file ===============================================================
-# Inlezen van contaminants file met genomische coordinaten van piRNAs uit UCSC.
-# Er wordt 1 hash aangemaakt, keys van deze hash zijn contaminant ids die op hun beurt gelinkt zijn aan chromosoom, start, stop, strand en type via nieuwe hash (hash of hashes).
+# Loading contaminants file with genomic coordinates of piRNAs from UCSC.
+# 1 hash is created, keys of this hash are contaminant ids which in turn are linked to chromosome, start, stop, strand and type via new hash (hash of hashes).
 print "Reading UCSC piRNA contaminants file... ";
 
 my %piRNA = ();
