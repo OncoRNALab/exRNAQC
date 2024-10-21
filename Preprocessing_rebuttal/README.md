@@ -198,40 +198,40 @@ repeat_analysis: "yes"
 ## Pipeline Workflow
 ### Full length RNA 
 #### 1.	Load Parameters:
-    - Parse command-line arguments to get the path to a YAML configuration file.
-    - Load the configuration parameters from the YAML file.
+- Parse command-line arguments to get the path to a YAML configuration file.
+- Load the configuration parameters from the YAML file.
 #### 2.	Initialize Variables:
-	- Extract various parameters from the configuration file, such as output directory, data type, deduplication method, subsampling timing, and others.
+- Extract various parameters from the configuration file, such as output directory, data type, deduplication method, subsampling timing, and others.
 #### 3.	Load STAR Index:
-    - Load the STAR index into memory for alignment purposes.
+- Load the STAR index into memory for alignment purposes.
 #### 4.	Read Sample List:
-    - Read the sample list file to get pairs of sample IDs and their corresponding read files (R1 and R2).
+- Read the sample list file to get pairs of sample IDs and their corresponding read files (R1 and R2).
 #### 5.	Process Each Sample:
-    - For each sample, perform the following steps:
-    	- Print the sample ID and read files being processed.
-    	- Determine the deduplication mode and subsampling timing.
-    	- Perform quality control (QC) and trimming:
-        	- Run FastQC on the original reads.
-        	- If adapter contamination is specified, trim the adapters.
-        	- Trim the reads to a specified length.
-        	- Optionally, remove reads with bad quality.
-        	- Run FastQC on the trimmed reads.
-    	- If repeat analysis is enabled, skip the QC and trimming steps.
-    	- If single-end data and fragment length mean or standard deviation are not provided, exit with an error.
-    	- Perform subsampling if specified.
-    	- Perform deduplication:
-    	    - If using Clumpify, align reads with STAR, infer strandedness, remove duplicates, and run Kallisto quantification.
-    	    - If using Picard, align reads with STAR, deduplicate with Picard, convert BAM to FASTQ, and run Kallisto quantification.
-    	- Perform STAR alignment and sort BAM files by name.
-    	- Run HTSeq for quantification and generate index statistics.
+- For each sample, perform the following steps:
+	- Print the sample ID and read files being processed.
+	- Determine the deduplication mode and subsampling timing.
+	- Perform quality control (QC) and trimming:
+	- Run FastQC on the original reads.
+	- If `adapter contamination` is specified, trim the adapters.
+	- Trim the reads to a specified length.
+	- Optionally, remove reads with bad quality.
+	- Run FastQC on the trimmed reads.
+	- If `repeat analysis` is enabled, skip the QC and trimming steps.
+	- If `single-end data` and `fragment length mean` or `standard deviation` are not provided, exit with an error.
+	- Perform `subsampling` if specified.
+	- Perform `deduplication`:
+	    - If using Clumpify, align reads with STAR, infer strandedness, remove duplicates, and run Kallisto quantification.
+	    - If using Picard, align reads with STAR, deduplicate with Picard, convert BAM to FASTQ, and run Kallisto quantification.
+	- Perform STAR alignment and sort BAM files by name.
+	- Run HTSeq for quantification and generate index statistics.
 #### 6.	Unload STAR Index:
     - Unload the STAR index from memory after processing all samples.
 #### 7.	Handle Subsampling Level Determination:
-  - If subsampling is set to start but no subsampling level is provided, exit with instructions to determine the subsampling level after quality filtering.
+  - If `subsampling` is set to start but no subsampling level is provided, exit with instructions to determine the subsampling level after quality filtering.
 
 ### SmallRNA
 #### 1. Directory Setup:
-- For each sample in the `paired_files`, the script will:
+- For each sample in the `file_list.txt`, the script will:
   - Create the necessary directories for output, scripts, and logs.
   - Determine the subsampling mode based on the `subsampling` parameter.
 
