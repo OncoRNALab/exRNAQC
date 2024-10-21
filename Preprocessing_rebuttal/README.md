@@ -16,9 +16,10 @@ This repository contains all the scripts and supplementary files required for pr
     - [5. Update configuration files](#5-update-configuration-files)
     - [6. Execute the preprocessing pipelines](#6-execute-the-preprocessing-pipelines)
     - [7. Subsampling and Repeat Analysis](#7-Subsampling-and-Repeat-Analysis)
-5. [Output Folder Structure](#output-folder-structure)
-6. [License](#license)
-7. [Contact](#contact)
+5. [Pipeline Summary](#Pipeline-Summary)
+6. [Output Folder Structure](#output-folder-structure)
+7. [License](#license)
+8. [Contact](#contact)
    
 ## Project Structure
 
@@ -193,6 +194,41 @@ subsample_to_nr: "700000"
 repeat_analysis: "yes"
 ```
 5. Run the pipeline again.
+
+### Pipeline Summary
+1.	Load Parameters:
+o	Parse command-line arguments to get the path to a YAML configuration file.
+o	Load the configuration parameters from the YAML file.
+2.	Initialize Variables:
+o	Extract various parameters from the configuration file, such as output directory, data type, deduplication method, subsampling timing, and others.
+3.	Load STAR Index:
+o	Load the STAR index into memory for alignment purposes.
+4.	Read Sample List:
+o	Read the sample list file to get pairs of sample IDs and their corresponding read files (R1 and R2).
+5.	Process Each Sample:
+o	For each sample, perform the following steps:
+	Print the sample ID and read files being processed.
+	Determine the deduplication mode and subsampling timing.
+	Perform quality control (QC) and trimming:
+	Run FastQC on the original reads.
+	If adapter contamination is specified, trim the adapters.
+	Trim the reads to a specified length.
+	Optionally, remove reads with bad quality.
+	Run FastQC on the trimmed reads.
+	If repeat analysis is enabled, skip the QC and trimming steps.
+	If single-end data and fragment length mean or standard deviation are not provided, exit with an error.
+	Perform subsampling if specified.
+	Perform deduplication:
+	If using Clumpify, align reads with STAR, infer strandedness, remove duplicates, and run Kallisto quantification.
+	If using Picard, align reads with STAR, deduplicate with Picard, convert BAM to FASTQ, and run Kallisto quantification.
+	Perform STAR alignment and sort BAM files by name.
+	Run HTSeq for quantification and generate index statistics.
+6.	Unload STAR Index:
+o	Unload the STAR index from memory after processing all samples.
+7.	Handle Subsampling Level Determination:
+o	If subsampling is set to start but no subsampling level is provided, exit with instructions to determine the subsampling level after quality filtering.
+This pipeline ensures that RNA sequencing data is preprocessed, including quality control, trimming, deduplication, alignment, and quantification, based on the specified configuration parameters.
+
 
 ## Output Folder Structure
 
