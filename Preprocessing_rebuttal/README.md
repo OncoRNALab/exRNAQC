@@ -224,9 +224,8 @@ repeat_analysis: "yes"
     - If using Picard, align reads with STAR, deduplicate with Picard, convert BAM to FASTQ, and run Kallisto quantification.
   - Sort BAM files by name.
   - Run HTSeq for quantification and generate index statistics.
-
- ### 6.	Unload STAR Index:
-    - Unload the STAR index from memory after processing all samples.
+#### 6.	Unload STAR Index:
+- Unload the STAR index from memory after processing all samples.
 #### 7.	Handle Subsampling Level Determination:
   - If `subsampling` is set to start but no subsampling level is provided, exit with instructions to determine the subsampling level after quality filtering.
 
