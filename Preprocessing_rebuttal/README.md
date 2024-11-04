@@ -184,7 +184,6 @@ python3 SmallRNA_preprocessing.py --config config_small.yaml
 for sample in $(ls | grep "RNA0"); do lines=4; qcfil_lines=`zcat ${sample}/trimming/${sample}_1_trim_len_qc.fastq.gz | wc -l`; echo $((qcfil_lines/lines)) $(echo $sample); done >> lines_fastq.txt
 sort -nk1 lines_fastq.txt | head
 #smallRNAseq
-for sample in $(ls | grep "RNA0"); do qcfil_lines=`wc -l ${sample}/${sample}_qc.fastq.gz`; echo $qcfil_lines $sample; done >> lines_fastq.txt
 for sample in $(ls | grep "RNA0"); do lines=4; qcfil_lines=`zcat ${sample}/${sample}_qc.fastq.gz | wc -l`; echo $((qcfil_lines/lines)) $(echo $sample); done >> lines_fastq.txt
 sort -nk1 lines_fastq.txt | head
 ```
