@@ -126,7 +126,7 @@ STAR   --runMode genomeGenerate   \
 Similarly, the fasta file for building the index was done concatenating Ensembl version 91 of the human genome, ERCC and Sequin spike sequences.
 
 ```bash
-kallisto index -i path/to/index path/to/fast
+kallisto index -i path/to/index path/to/fasta
 ```
 3. Bowtie index
 
@@ -181,11 +181,12 @@ python3 SmallRNA_preprocessing.py --config config_small.yaml
 
 ```bash
 #fullRNAseq
-for sample in $(ls | grep "RNA0"); do qcfil_lines=`wc -l ${sample}/trimming/${sample}_1_trim_len_qc.fastq.gz`; echo $qcfil_lines $sample; done >> lines_fastq.txt
+for sample in $(ls | grep "RNA0"); do lines=4; qcfil_lines=`zcat ${sample}/trimming/${sample}_1_trim_len_qc.fastq.gz | wc -l`; echo $((qcfil_lines/lines)) $(echo $sample); done >> lines_fastq.txt
 sort -nk1 lines_fastq.txt | head
 #smallRNAseq
 for sample in $(ls | grep "RNA0"); do qcfil_lines=`wc -l ${sample}/${sample}_qc.fastq.gz`; echo $qcfil_lines $sample; done >> lines_fastq.txt
-
+for sample in $(ls | grep "RNA0"); do lines=4; qcfil_lines=`zcat ${sample}/${sample}_qc.fastq.gz | wc -l`; echo $((qcfil_lines/lines)) $(echo $sample); done >> lines_fastq.txt
+sort -nk1 lines_fastq.txt | head
 ```
 2. Add the number of reads for subsampling to the yaml config file.
 3. Change the repeat_analysis to yes in the config yaml file
@@ -194,6 +195,8 @@ subsample_to_nr: "700000"
 repeat_analysis: "yes"
 ```
 5. Run the pipeline again.
+- preprocess of FulRNA test dataset (with 100K reads) takes aprox. 16min with 64gb of RAM
+- preprocess of smallRNA test dataset (with 10K reads) takes aprox. 1min with 64gb of RAM
 
 ## Pipeline Workflow
 ### Full length RNA 
