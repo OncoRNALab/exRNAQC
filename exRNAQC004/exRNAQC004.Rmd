@@ -74,16 +74,14 @@ full_nr <- format_format(big.mark = ",", decimal.mark = ".", scientific = FALSE)
 options(scipen=10000)
 
 # Global variables
-data_path <- here::here("data_raw/") #add path with count data from the different samples in one file
-
+data_path <- "data_raw/" #add path with count data from the different samples in one file
 ```
 
 # Annotation
 Sample annotation with info about kit, used input volume, eluate volume etc.
 
 ```{r annotation, echo=FALSE}
-sample_annotation<-read_csv(here::here("docs","Annotation exRNAQC004.csv"))
-#sample_annotation<-read_csv("../docs/Annotation exRNAQC004.csv")
+sample_annotation<-read_csv("Annotation exRNAQC004.csv")
 sample_annotation<-sample_annotation %>% mutate(SampleID= paste0(GraphKit,"_",TechnicalReplicate), PlasmaInputVml= PlasmaInputV/1000)
 
 DT::datatable(sample_annotation %>% dplyr::select(c("UniqueID","Biotype","RNAisolation","PlasmaInputV","EluateV","RNAinputV","TechnicalReplicate","Tube","LibraryPrep","Sequinconc","ERCCconc",Abbrevation="GraphKit")), rownames = TRUE, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Sample annotation table")
@@ -92,15 +90,15 @@ Sequin spike-in controls are added to plasma prior to RNA isolation, and Externa
 Original spike concentrations in mix are taken from providers' annotation files (Garvan Institute of Medical Research for Sequins and ThermoFisher Scientific for ERCCs)
 
 ```{r spike_annotation, echo=FALSE}
-spike_conc_ERCC<-read_tsv(here::here("docs","spikes","cms_095046.txt"))
+spike_conc_ERCC<-read_tsv(here::here("Resources", "cms_095046.txt"))
 colnames(spike_conc_ERCC)<-c("numb_id","spike_id","subgroup","mix1","mix2","FC","log2mix1mix2")
 spike_conc_ERCC<-spike_conc_ERCC[,c("spike_id","mix1")]
 
-spike_conc_Seq<-read_tsv(here::here("docs","spikes","RNAsequins_isoform_mix.v2.2.tsv"))
+spike_conc_Seq<-read_tsv(here::here("Resources", "RNAsequins_isoform_mix.v2.2.tsv"))
 colnames(spike_conc_Seq)<-c("spike_id","length","mix1","mix2")
 spike_conc_Seq<-spike_conc_Seq[,c("spike_id","mix1")]
 
-spike_conc_gene_Seq<-read_tsv(here::here("docs","spikes","RNAsequins_gene_mix.v2.2.tsv"))
+spike_conc_gene_Seq<-read_tsv(here::here("Resources", "RNAsequins_gene_mix.v2.2.tsv"))
 colnames(spike_conc_gene_Seq)<-c("spike_id","length","mix1","mix2")
 spike_conc_gene_Seq<-spike_conc_gene_Seq[,c("spike_id","mix1")]
 ```
@@ -464,7 +462,7 @@ Our pipeline converts reads to spike and transcript counts using Kallisto, based
 **MAP samples filtered out (see [Strandedness])**
 
 ```{r kallisto_data_aggregation, warning=F, eval=F, echo=F}
-# ### Kallisto counts after clumpify deduplication
+# Run this section of the code to make the  Kallisto counts after clumpify deduplication, have to provide the list of all kallisto outputs form the preprocessing pipeline.
 # library(biomaRt)
 # ensembl <- useEnsembl(biomart="ensembl",dataset="hsapiens_gene_ensembl",version=91)
 # genes_ens <- getBM(attributes=c('ensembl_gene_id','ensembl_transcript_id'),mart=ensembl)
@@ -508,7 +506,7 @@ Our pipeline converts reads to spike and transcript counts using Kallisto, based
 # write.table(kallisto_tpm, paste0(path_to_output,"kallisto_transcript_afterclumpify_TPM.txt"), sep="\t", quote = F, na = "", row.names = F)
 
 
-#### ALTERNATIVE: read in data tables previously made with data_cleaning_hpc.R script or with commands above
+#### Read in data tables previously made with commands above
 ```
 
 ```{r read_kallisto_data}
