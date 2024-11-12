@@ -109,6 +109,12 @@ The UCSC hg38.fa file was concatenated with ribosomal, spike-ins and chrIS fasta
 cat hg38.fa rDNA_2.fa ERCC92.fa chrIS.fa > GRCh38_ucsc_lift_ERCC_chrIS_r45S.fa
 cat Homo_sapiens.GRCh38.100_ucsc-named.gtf ERCC92.gtf RNAsequins.v2.2.gtf > GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf
 ```
+Build BED file
+```bash
+awk -F"\t" 'BEGIN{OFS="\t"} $3 == "exon" { print $1,$4-1,$5,$6,$8,$7 }' GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf > GRCh38.109_exons_unsorted.bed
+sortBed -i GRCh38.109_exons_unsorted.bed > GRCh38.109_exons_sorted.bed
+mergeBed -i GRCh38.109_exons_sorted.bed -s -c 4,5,6 -o distinct > Homo_sapiens.GRCh38.109.chrIS_spikes_45S_exons_sorted_merged.bed
+```
 Build STAR index
 
 ```bash
