@@ -186,167 +186,115 @@ Low amount of input RNA, such as in plasma, results in many PCR duplicates. Afte
 Gene counts of 2 technical replicates are plotted against each other
 R-squared determined based on linear regression of the log counts of these genes (higher R2 = better)
 
-```{r dup_dedup1, fig.align="center", fig.width=8, fig.height=4, fig.cap="Pairwise RNA count comparison of first and third replicate of the NOR5 kit without (left) and with (right) duplicate removal. R2 is the coefficient of determination (linear model that fits log10 values). The 95% SP cutoff removes at least 95% of single positives. Single positives are 0 in one replicate and > 0 in other. Green dots show data points that are filtered out with this cutoff. (NOR5: plasma/serum circulating and exosomal RNA purification kit, 5 ml input)"}
-double_positives <- readRDS("dedup_DP.rds") #see below for details of calculation
-single_pos <- readRDS("dedup_SPcutoff.rds")
+```{r}
+#The full analysis was done for all the replicates, but only the following two replicates were included in the final article. 
+Norgen_samples <- c("RNA003614L1", "RNA003616L1")
+#to make the linear correlation of 
+#Deduplicated files loadthe doublePos_Dedup.csv 
+#Non deduplicated files doublePos_NoDedup.csv
+double_positives_FC<-read_csv2(paste0(data_path,"doublePos_Dedup.csv"))
+                               
+test <- sample_annotation %>% dplyr::filter(UniqueID %in% Norgen_samples)
 
-double_positives_nodedup <- readRDS("nodedup_DP.rds")
-single_pos_nodedup <- readRDS("nodedup_SPcutoff.rds")
-
-
-###### EXAMPLE1
-sample_duplicates<-sample_annotation %>% filter(GraphKit=="NOR5") %>%
-    dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
-
-sample1 <- sample_duplicates$UniqueID[1]
-sample2 <- sample_duplicates$UniqueID[3]
-varname = "NOR5_RNA1-RNA3"
-
-
-### Without PCR duplicate removal
-DP_sample_nodedup<-double_positives_nodedup %>%
-        dplyr::select(ensembl_gene_id,sample1, sample2)
-
-threshold_nodedup <- as.numeric(paste(single_pos_nodedup %>% filter(GraphKit=="CIRC5" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
-
-DP_sample_nodedup$colouring <- as.factor(ifelse(DP_sample_nodedup[,paste(sample1)] > threshold_nodedup, "> cutoff", 
-                                                      ifelse(DP_sample_nodedup[,paste(sample2)] > threshold_nodedup, "> cutoff", "<= cutoff")))
-
-#lm_tmp <- lm(log1p(pull(double_pos_sample,sample1)) ~ -1 + log1p(pull(double_pos_sample, sample2))) # fit linear model of log values technical replicates (no intercept)
-lm_tmp_nodedup <- lm(log(pull(DP_sample_nodedup,sample1)+1,10) ~ -1 + log(pull(DP_sample_nodedup, sample2)+1,10)) # fit linear model of log values technical replicates (no intercept)
-lm_rsquared_nodedup <- summary(lm_tmp_nodedup)$r.squared #take r-squared of lm 
-
-p1 <- ggplot(DP_sample_nodedup, aes(x=log(get(sample1)+1,10), y=log(get(sample2)+1,10), col=colouring)) +
-  geom_point(size=0.5, alpha=0.4) +
-  theme_classic() +
-  theme(plot.title=element_text(size=9, margin=margin(1,0,0,0)), plot.subtitle=element_text(size=7),
-        legend.title=element_blank(), legend.text=element_text(size=8), legend.position="bottom",
-        axis.title=element_text(size=8)) +
-  scale_color_manual(values=color_panel[2:6]) +
-  guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
-  scale_x_continuous(limits=c(0,6)) +
-  scale_y_continuous(limits=c(0,6)) +
-  labs(title=paste0("NO duplicate removal (R2 = ", round(lm_rsquared_nodedup,3),')'),
-       subtitle=paste0("95% SP cutoff = ", round(threshold_nodedup,0)), #R squared of linear model fitting log values of 2 technical replicates
-                       x=paste0("log10(replicate1 + 1)"), y=paste0("log10(replicate3 + 1)"))
-
-rm(lm_rsquared_nodedup, lm_tmp_nodedup)
-
-#ggExtra::ggMarginal(p1, type = "histogram", size=7)
-
-
-### WITH duplicate removal
-double_pos_sample<-double_positives %>%
-        dplyr::select(ensembl_gene_id,sample1, sample2)
-
-threshold <- as.numeric(paste(single_pos %>% filter(GraphKit=="CIRC5" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
-
-double_pos_sample$colouring <- as.factor(ifelse(double_pos_sample[,paste(sample1)] > threshold, "> cutoff", 
-                                                      ifelse(double_pos_sample[,paste(sample2)] > threshold, "> cutoff", "<= cutoff")))
-
-lm_tmp <- lm(log(pull(double_pos_sample,sample1)+1,10) ~ -1 + log(pull(double_pos_sample, sample2)+1,10)) # fit linear model of log values technical replicates (no intercept)
-lm_rsquared <- summary(lm_tmp)$r.squared #take r-squared of lm 
-
-p <- ggplot(double_pos_sample, aes(x=log(get(sample1)+1,10), y=log(get(sample2)+1,10), col=colouring)) +
-  geom_point(size=0.5, alpha=0.4) +
-  theme_classic() +
-  theme(plot.title=element_text(size=9, margin=margin(1,0,0,0)), plot.subtitle=element_text(size=7),
-        legend.title=element_blank(), legend.text=element_text(size=8), legend.position="bottom",
-        axis.title=element_text(size=8)) +
-  scale_color_manual(values=color_panel[2:6]) +
-  guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
-  scale_x_continuous(limits=c(0,6)) +
-  scale_y_continuous(limits=c(0,6)) +
-  labs(title=paste0("WITH duplicate removal (R2 = ", round(lm_rsquared,3),')'),
-       subtitle=paste0("95% SP cutoff = ", round(threshold,0)), #R squared of linear model fitting log values of 2 technical replicates
-                       x=paste0("log10(replicate1 + 1)"), y=paste0("log10(replicate3 + 1)"))
-
-rm(lm_rsquared, lm_tmp)
-
-#ggExtra::ggMarginal(p, type = "histogram", size=7)
-
-grid.arrange(p1, p, nrow=1, top=varname)
-
+single_pos_FC <- data.frame(Condition = rep(unique(test$GraphKit),1) %>% sort(), 
+                          Replicates = rep(c("RNA1-RNA3"), length(unique(test$GraphKit))), 
+                          SP_no_filter = NA, DP_no_filter = NA, DN_no_filter = NA,   
+                          SP_after_filter = NA, DP_after_filter = NA, DN_after_filter = NA, filter_threshold = NA) 
+single_pos_FC$full_name <- paste(single_pos_FC$Condition, single_pos_FC$Replicates, sep="_")
 ```
 
-```{r dup_dedup2, fig.width=8, fig.height=4, fig.cap="Pairwise RNA count comparison of first and third replicate of the MAX0.5 kit without (left) and with (right) duplicate removal. R2 is the coefficient of determination (linear model that fits log10 values). The 95% SP cutoff removes at least 95% of single positives. Single positives are 0 in one replicate and > 0 in other. Green dots show data points that are filtered out with this cutoff. (MAX0.5: Maxwell RSC miRNA plasma and exosome kit, 0.5 ml input)"}
-
-###### EXAMPLE 2
-sample_duplicates<-sample_annotation %>% filter(GraphKit=="MAX0.5") %>%
+```{r}
+for (UniqueCon in unique(test$GraphKit)){
+  sample_duplicates_2<-test %>% filter(GraphKit==UniqueCon) %>%
     dplyr::select(UniqueID,GraphKit,TechnicalReplicate)
+  
+  if(nrow(sample_duplicates_2)>1){
+    #print(UniqueKit)
+    double_pos_sample2<-double_positives_FC %>%
+        dplyr::select(ensembl_gene_id, sample_duplicates_2$UniqueID)
+    
+    samples_comb2 <- combn(sample_duplicates_2$UniqueID ,2) #compare 2 of the 3 samples at a time
+    
+    for (n_col in 1:ncol(samples_comb2)){
+      #print(samples_comb[,n_col])
+      samplename1 <- samples_comb2[,n_col][1]
+      sample1 <- test[test$UniqueID==samplename1,]$TechnicalReplicate
+      samplename2 <- samples_comb2[,n_col][2]
+      sample2 <- test[test$UniqueID==samplename2,]$TechnicalReplicate
+      varname <- paste0(UniqueCon,"_",sample1,"-",sample2)
+      #print(varname)
+      
+      double_pos_subset <- double_pos_sample2 %>% dplyr::select(ensembl_gene_id, paste(samplename1), paste(samplename2))
+      
+      double_pos_subset$pos_type <- as.factor(
+        ifelse(double_pos_subset[,paste(samplename1)] > 0 & 
+                 double_pos_subset[,paste(samplename2)] > 0, "DP", #double positive
+               ifelse(double_pos_subset[,paste(samplename1)] == 0 &
+                        double_pos_subset[,paste(samplename2)] ==0 , "DN", #double negative
+                      "SP"))) # else: single positive
+      single_p <- double_pos_subset %>% 
+        filter(pos_type=="SP") %>% 
+        mutate(., max=pmax(get(samplename1), get(samplename2)))
+      
+      #Threshold that removes 95% of the single positives
+      threshold <- round(as.numeric(paste(quantile(single_p$max,probs = 0.95, na.rm=TRUE)))+0.005, 2) #get the 95% quantile number, round UP to two decimal numbers
+      
+      double_pos_subset$colouring <- as.factor(ifelse(double_pos_subset[,paste(samplename1)] > threshold, "> cutoff", 
+                                                      ifelse(double_pos_subset[,paste(samplename2)] > threshold, "> cutoff", "<= cutoff")))
+     
+      single_pos_FC[single_pos_FC$full_name==paste(varname),]$filter_threshold <- threshold
+      
+      #Single Positives
+      single_pos_FC[single_pos_FC$full_name==paste(varname),]$SP_no_filter <- sum( 
+        ((double_pos_subset[,paste(samplename1)] > 0) & (double_pos_subset[,paste(samplename2)] == 0)) | 
+          ((double_pos_subset[,paste(samplename1)] == 0) & (double_pos_subset[,paste(samplename2)] > 0))
+        )
+      single_pos_FC[single_pos_FC$full_name==paste(varname),]$SP_after_filter <-  sum( 
+        ((double_pos_subset[,paste(samplename1)] > threshold) & (double_pos_subset[,paste(samplename2)] == 0)) | 
+          ((double_pos_subset[,paste(samplename1)] == 0) & (double_pos_subset[,paste(samplename2)] > threshold))
+        )
+      
+      #Double Positives
+      single_pos_FC[single_pos_FC$full_name==paste(varname),]$DP_no_filter <- sum((double_pos_subset[,paste(samplename1)] > 0) & 
+                                                                              (double_pos_subset[,paste(samplename2)] > 0))
+      single_pos_FC[single_pos_FC$full_name==paste(varname),]$DP_after_filter <- sum((double_pos_subset[,paste(samplename1)] > threshold) & 
+                                                                                 (double_pos_subset[,paste(samplename2)] > threshold))
+      
+      #Double Negatives
+      single_pos_FC[single_pos_FC$full_name==paste(varname),]$DN_no_filter <- sum((double_pos_subset[,paste(samplename1)] == 0) & 
+                                                                              (double_pos_subset[,paste(samplename2)] == 0))
+      single_pos_FC[single_pos_FC$full_name==paste(varname),]$DN_after_filter <- sum((double_pos_subset[,paste(samplename1)] <= threshold) & 
+                                                                              (double_pos_subset[,paste(samplename2)] <= threshold))
+      
+      #Calculate percentages of SP and DP remaining after filtering
+      single_pos_FC$remainingSP <- single_pos_FC$SP_after_filter/single_pos_FC$SP_no_filter
+      single_pos_FC$remainingDP <- single_pos_FC$DP_after_filter/single_pos_FC$DP_no_filter
+      
+      lm_tmp <- lm(log(pull(double_pos_sample2,samplename1)+1,10) ~ -1 + log(pull(double_pos_sample2, samplename2)+1,10)) # fit linear model of log values technical replicates (no intercept)
+      lm_rsquared <- summary(lm_tmp)$r.squared #take r-squared of lm 
 
-sample1 <- sample_duplicates$UniqueID[1]
-sample2 <- sample_duplicates$UniqueID[3]
-varname = "MAX0.5_RNA1-RNA3"
-
-
-### Without PCR duplicate removal
-DP_sample_nodedup<-double_positives_nodedup %>%
-        dplyr::select(ensembl_gene_id,sample1, sample2)
-
-threshold_nodedup <- as.numeric(paste(single_pos_nodedup %>% filter(GraphKit=="MAX0.5" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
-
-DP_sample_nodedup$colouring <- as.factor(ifelse(DP_sample_nodedup[,paste(sample1)] > threshold_nodedup, "> cutoff", 
-                                                      ifelse(DP_sample_nodedup[,paste(sample2)] > threshold_nodedup, "> cutoff", "<= cutoff")))
-
-#lm_tmp <- lm(log1p(pull(double_pos_sample,sample1)) ~ -1 + log1p(pull(double_pos_sample, sample2))) # fit linear model of log values technical replicates (no intercept)
-lm_tmp_nodedup <- lm(log(pull(DP_sample_nodedup,sample1)+1,10) ~ -1 + log(pull(DP_sample_nodedup, sample2)+1,10)) # fit linear model of log values technical replicates (no intercept)
-lm_rsquared_nodedup <- summary(lm_tmp_nodedup)$r.squared #take r-squared of lm 
-
-p1 <- ggplot(DP_sample_nodedup, aes(x=log(get(sample1)+1,10), y=log(get(sample2)+1,10), col=colouring)) +
-  geom_point(size=0.5, alpha=0.4) +
-  theme_classic() +
-  theme(plot.title=element_text(size=9, margin=margin(1,0,0,0)), plot.subtitle=element_text(size=7),
-        legend.title=element_blank(), legend.text=element_text(size=8), legend.position="bottom",
-        axis.title=element_text(size=8)) +
-  scale_color_manual(values=color_panel[2:6]) +
-  guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
-  scale_x_continuous(limits=c(0,6)) +
-  scale_y_continuous(limits=c(0,6)) +
-  labs(title=paste0("NO duplicate removal (R2 = ", round(lm_rsquared_nodedup,3),')'),
-       subtitle=paste0("95% SP cutoff = ", round(threshold_nodedup,0)), #R squared of linear model fitting log values of 2 technical replicates
-                       x=paste0("log10(replicate1 + 1)"), y=paste0("log10(replicate3 + 1)"))
-
-rm(lm_rsquared_nodedup, lm_tmp_nodedup)
-
-#ggExtra::ggMarginal(p1, type = "histogram", size=7)
-
-
-### WITH duplicate removal
-double_pos_sample<-double_positives %>%
-        dplyr::select(ensembl_gene_id,sample1, sample2)
-
-threshold <- as.numeric(paste(single_pos %>% filter(GraphKit=="MAX0.5" & Replicates=="RNA1-RNA3") %>% dplyr::select(filter_threshold)))
-
-double_pos_sample$colouring <- as.factor(ifelse(double_pos_sample[,paste(sample1)] > threshold, "> cutoff", 
-                                                      ifelse(double_pos_sample[,paste(sample2)] > threshold, "> cutoff", "<= cutoff")))
-
-lm_tmp <- lm(log(pull(double_pos_sample,sample1)+1,10) ~ -1 + log(pull(double_pos_sample, sample2)+1,10)) # fit linear model of log values technical replicates (no intercept)
-lm_rsquared <- summary(lm_tmp)$r.squared #take r-squared of lm 
-
-p <- ggplot(double_pos_sample, aes(x=log(get(sample1)+1,10), y=log(get(sample2)+1,10), col=colouring)) +
-  geom_point(size=0.5, alpha=0.4) +
-  theme_classic() +
-  theme(plot.title=element_text(size=9, margin=margin(1,0,0,0)), plot.subtitle=element_text(size=7),
-        legend.title=element_blank(), legend.text=element_text(size=8), legend.position="bottom",
-        axis.title=element_text(size=8)) +
-  scale_color_manual(values=color_panel[2:6]) +
-  guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
-  scale_x_continuous(limits=c(0,6)) +
-  scale_y_continuous(limits=c(0,6)) +
-  labs(title=paste0("WITH duplicate removal (R2 = ", round(lm_rsquared,3),')'),
-       subtitle=paste0("95% SP cutoff = ", round(threshold,0)), #R squared of linear model fitting log values of 2 technical replicates
-                       x=paste0("log10(replicate1 + 1)"), y=paste0("log10(replicate3 + 1)"))
-
-rm(lm_rsquared, lm_tmp)
-
-#ggExtra::ggMarginal(p, type = "histogram", size=7)
-
-grid.arrange(p1, p, nrow=1, top=varname)
-
-rm(p, p1, sample_duplicates, varname, sample1, sample2)
-rm(double_positives, double_positives_nodedup, double_pos_sample, DP_sample_nodedup, single_pos, single_pos_nodedup, threshold, threshold_nodedup)
-
+      p <- ggplot(double_pos_subset, aes(x=log(get(samplename1)+1,10), y=log(get(samplename2)+1,10), col=colouring)) +
+        geom_point(alpha=0.3,size=0.4) +
+        theme_classic() +
+        scale_x_continuous(limits=c(0,5)) +
+        scale_y_continuous(limits=c(0,5)) +
+        theme(plot.title=element_text(size=9), plot.subtitle=element_text(size=7),
+              legend.title=element_blank(), legend.text=element_text(size=8), legend.position="top",
+              axis.title=element_text(size=8)) +
+        scale_color_manual(values=color_panel[2:6]) +
+        guides(color = guide_legend(override.aes = list(alpha = 1))) + #make sure legend color is clear
+        labs(title=paste(varname, ": cutoff of", threshold),
+             subtitle=paste0("% remaining after filtering: ",
+                             round(single_pos_FC[single_pos_FC$full_name==paste(varname),]$remainingSP*100,2),"% of SP (R2 = ",
+                             round(lm_rsquared,3), ")"), #R squared of linear model fitting log values of 2 technical replicates
+             x=paste0("log10(",sample1,"+1)"), y=paste0("log10(",sample2,"+1)"))
+      print(p)
+      ggsave(paste0(varname, "CorrDupl.pdf"), p, dpi = 300, width = 6, height = 6)
+      rm(lm_tmp,lm_rsquared)
+    }
+    
+  }
+}
 ```
 
 ### Duplicate removal

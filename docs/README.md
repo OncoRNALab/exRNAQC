@@ -70,5 +70,6 @@ Data analyses: [exRNAQC013 html](https://github.com/OncoRNALab/exRNAQC/blob/main
 - Figure 14 in [1_NEW_HEATMAP.R](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC020/1_NEW_HEATMAP.R)
 - Figure 15 in [repeated_measures.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC017/repeated_measures.Rmd)
 - Figure 16 in [repeated_measures_smallRNA.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC017/repeated_measures_smallRNA.Rmd)
+- Figure 17 in [exRNAQC004.Rmd](https://github.com/OncoRNALab/exRNAQC/blob/main/exRNAQC004/exRNAQC004.Rmd)
 
 
