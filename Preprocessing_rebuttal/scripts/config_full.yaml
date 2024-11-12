@@ -8,7 +8,7 @@ subsample_to_nr: '100000' #number of read to subsampling
 kal_index: "../resources/Kall_idx_exRNAQC" #Kallisto index
 fragmean: None #kallisto parameters
 fragsd: None #kallisto parameters
-exon_bed: "../resources/GRCh38/Homo_sapiens.GRCh38.109.chrIS_spikes_45S_exons_sorted_merged.bed" #follow the instructions to build this files
+exon_bed: "../resources/Homo_sapiens.GRCh38.109.chrIS_spikes_45S_exons_sorted_merged.bed" #follow the instructions to build this files
 star_index: "../resources/star_index" #follow the instructions to build this files
 gtf: "../resources/GRCh38_ucsc_lift_ERCC_chrIS_r45S.gtf" #follow the instructions to build this files
 adaptercontam: "truseq" #truseq, nextera or no
