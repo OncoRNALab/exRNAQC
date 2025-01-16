@@ -129,6 +129,7 @@ pdf("./NON_BINARY_sig_pvalue_inblack_beta_reg_OCT2023.pdf", height = 4, width = 
                      breaks = bk1,
                      display_numbers = labels_tab, fontsize_number = 6, number_color="black",
                      na_col = "white",
+                     gaps_row = 5,
                      color = custom_palette2,
                      show_colnames = FALSE,
                      angle_col = 45)
