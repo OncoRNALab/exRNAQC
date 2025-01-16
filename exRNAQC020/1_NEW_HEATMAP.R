@@ -65,7 +65,7 @@ ALL_OUTPUT = lapply(cell.types, function(cell_type){
   
   m.methods <- emmeans(m, ~TimeLapse|Tube)
   
-  results = melt(pairs(m.methods))
+  results = reshape2::melt(pairs(m.methods))
   results = results[,c(1,2,ncol(results))]
   colnames(results) = c("time_comparison", "tube", "p-value")
   results$CT = gsub("_","\\.", cell_type)
@@ -99,6 +99,9 @@ ALL_OUTPUT.backup = ALL_OUTPUT
 ## Transform p-values > 0.05 TO WHITE, gradient of p-values only for significant ones!
 ALL_OUTPUT = ALL_OUTPUT.backup
 
+#Reorder matrix & only keep T0-T1 and T0-T2
+ALL_OUTPUT = ALL_OUTPUT[c("ACD-A","Citrate","EDTA","EDTA separator","serum","Biomatrica","DNA Streck","RNA Streck","PAXgene","Roche"),grep("T1 - T2",colnames(ALL_OUTPUT),invert=T, value = T)]
+
 #breaks for legend
 bk1 <- c(seq(0, 0.051, by = 0.005))
 
@@ -107,9 +110,15 @@ custom_palette = c(colorRampPalette(brewer.pal(n = 7, name = "RdBu"))(20))
 custom_palette2 = c(custom_palette[1:10], 'white')
 
 #make matrix of labels (to display "<0.01" instead of the actual value)
-labels_tab <- round(ALL_OUTPUT, 3)
-labels_tab[labels_tab < 0.001] <- "<0.001"
+#labels_tab <- round(ALL_OUTPUT, 3)
+#labels_tab[labels_tab < 0.001] <- "<0.001"
+labels_tab <- ALL_OUTPUT
 labels_tab[labels_tab > 0.05] <- ""
+#use scientific notation
+labels_tab_formatted <- apply(labels_tab, c(1, 2), function(x) {
+  formatted <- sprintf("%.1e", as.numeric(x)) # Format to scientific notation
+  gsub("NA","",gsub("e-0", "e-", gsub("e\\+0", "e+", formatted))) # Remove leading zero in exponent
+})
 
 pdf("./NON_BINARY_sig_pvalue_inblack_beta_reg_OCT2023.pdf", height = 4, width = 10)
   pheatmap::pheatmap(round(ALL_OUTPUT, 3), 
